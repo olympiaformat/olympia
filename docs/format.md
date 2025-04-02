@@ -17,8 +17,7 @@ The root node is at location `/prefix/vn/00100110000000000000000000000000`,
 and 3 child nodes at locations within `/prefix/node/`.
 
 The b-tree is used as a key-value map, where the key encodes the object name,
-and the value can be different things depending on the key.
-Typically, it is a location within prefix that has the definition of the object as a serialized protobuf file.
+and the value is a location within prefix that has the definition of the object as a serialized protobuf file.
 For example, in this catalog there are object keys like `catalog_def`, `ns1`, `ns2.table2`, etc. with their corresponding definitions
 as files at locations within `/prefix/def/`.
 
@@ -29,6 +28,14 @@ as files at locations within `/prefix/def/`.
 A search tree is a tree data structure used for locating specific **Key**s from within a collection of keys,
 and used as an implementation of a **Set**. 
 A search tree consists of a collection of **Node**s, and each node contains an ordered collection of keys.
+To find if a target key is in the tree set, run the following algorithm:
+
+Start from the root node, we first check see if the target is in the node.
+If not, find the 2 consecutive keys that bound the target, or if the target is smaller or larger than all keys in the node.
+This will either lead to searching a subsequent child node and eventually find the target in the set,
+or if there is no child node to search, the key is not in the set.
+
+### N-Way Search Tree
 
 A **N-way search tree** is a search tree where:
 

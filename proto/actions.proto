@@ -1,0 +1,77 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+option java_multiple_files = true;
+
+package org.format.olympia.proto.actions;
+
+enum ActionType {
+  UNKNOWN = 0;
+  LAKEHOUSE_SNOW_NAMESPACES = 1;
+  NAMESPACE_EXISTS = 2;
+  NAMESPACE_DESCRIBE = 3;
+  NAMESPACE_CREATE = 4;
+  NAMESPACE_ALTER = 5;
+  NAMESPACE_ALTER_SET_PROPERTIES = 6;
+  NAMESPACE_ALTER_UNSET_PROPERTIES = 7;
+  NAMESPACE_DROP = 8;
+  NAMESPACE_SHOW_TABLES = 9;
+  NAMESPACE_SHOW_VIEWS = 10;
+  TABLE_EXISTS = 11;
+  TABLE_DESCRIBE = 12;
+  TABLE_CREATE = 13;
+  TABLE_ALTER = 14;
+  TABLE_ALTER_ADD_COLUMNS = 15;
+  TABLE_ALTER_REMOVE_COLUMNS = 16;
+  TABLE_INSERT = 17;
+  TABLE_UPDATE = 18;
+  TABLE_DELETE = 19;
+  TABLE_DROP = 20;
+  VIEW_EXISTS = 21;
+  VIEW_DESCRIBE = 22;
+  VIEW_CREATE = 23;
+  VIEW_REPLACE = 24;
+  VIEW_DROP = 25;
+}
+
+message NamespaceSetPropertiesDef {
+  repeated string keys = 1;
+}
+
+message NamespaceUnsetPropertiesDef {
+  repeated string keys = 1;
+}
+
+message TableAlterAddColumnsDef {
+  repeated string column_names = 1;
+}
+
+message TableAlterRemoveColumnsDef {
+  repeated string column_names = 1;
+}
+
+message TableUpdateDef {
+  repeated string added_data_file_locations = 1;
+  repeated string removed_data_file_locations = 2;
+}
+
+message TableSelectDef {
+  repeated string column_names = 1;
+  bytes substrait_expression = 2;
+}

@@ -1,0 +1,127 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '8.3.5'
+    id 'com.diffplug.spotless' version '6.25.0'
+    id 'com.palantir.baseline-checkstyle' version '4.42.0'
+    id 'com.google.protobuf' version '0.9.4'
+}
+
+if (JavaVersion.current() == JavaVersion.VERSION_11) {
+    project.ext.jdkVersion = '11'
+    project.ext.extraJvmArgs = []
+} else if (JavaVersion.current() == JavaVersion.VERSION_17 || JavaVersion.current() == JavaVersion.VERSION_21 || JavaVersion.current() == JavaVersion.VERSION_23) {
+    project.ext.jdkVersion = JavaVersion.current().getMajorVersion().toString()
+    project.ext.extraJvmArgs = ["--add-opens", "java.base/java.io=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.lang.reflect=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.math=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.net=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.nio=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.text=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.time=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.util.concurrent=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.util.regex=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.util=ALL-UNNAMED",
+                                "--add-opens", "java.base/jdk.internal.ref=ALL-UNNAMED",
+                                "--add-opens", "java.base/jdk.internal.reflect=ALL-UNNAMED",
+                                "--add-opens", "java.sql/java.sql=ALL-UNNAMED",
+                                "--add-opens", "java.base/sun.util.calendar=ALL-UNNAMED",
+                                "--add-opens", "java.base/sun.nio.ch=ALL-UNNAMED",
+                                "--add-opens", "java.base/sun.nio.cs=ALL-UNNAMED",
+                                "--add-opens", "java.base/sun.security.action=ALL-UNNAMED",
+                                "--add-opens", "java.base/sun.util.calendar=ALL-UNNAMED",
+                                "--add-opens", "java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED"]
+    // Workaround for SecurityManager deprecation in JDK23
+    if (JavaVersion.current() == JavaVersion.VERSION_23) {
+        project.ext.extraJvmArgs.add("-Djava.security.manager=allow")
+    }
+} else {
+    throw new GradleException("This build must be run with JDK 11, 17, 21, or 23 but was executed with JDK " + JavaVersion.current())
+}
+
+allprojects {
+
+    group = 'org.format.olympia'
+    version = '0.0.1'
+
+    repositories {
+        mavenCentral()
+        mavenLocal()
+    }
+}
+
+
+subprojects {
+    apply plugin: 'java'
+    apply plugin: 'com.diffplug.spotless'
+    apply plugin: 'com.palantir.baseline-checkstyle'
+
+    pluginManager.withPlugin('com.palantir.baseline-checkstyle') {
+        checkstyle {
+            toolVersion '9.3'
+            ignoreFailures = false
+            showViolations = true
+        }
+    }
+
+    pluginManager.withPlugin('com.diffplug.spotless') {
+        spotless {
+            java {
+                target 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/integration/java/**/*.java'
+                googleJavaFormat("1.24.0")
+                removeUnusedImports()
+                licenseHeaderFile "$rootDir/.baseline/copyright/copyright-header-java.txt"
+            }
+
+            scala {
+                scalafmt("3.8.2").configFile("$rootDir/.baseline/scala/.scalafmt.conf")
+                licenseHeaderFile "$rootDir/.baseline/copyright/copyright-header-java.txt", "package"
+            }
+        }
+    }
+
+    compileJava {
+        options.encoding = "UTF-8"
+    }
+
+    compileTestJava {
+        options.encoding = "UTF-8"
+    }
+
+    javadoc {
+        options.encoding = 'UTF-8'
+    }
+
+    sourceCompatibility = '11'
+    targetCompatibility = '11'
+
+    test {
+        useJUnitPlatform()
+        jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+    }
+
+    dependencies {
+        implementation "org.slf4j:slf4j-api:2.0.16"
+        testImplementation "org.junit.jupiter:junit-jupiter:5.10.1"
+        testImplementation "org.assertj:assertj-core:3.27.3"
+        testImplementation "org.apache.logging.log4j:log4j-slf4j2-impl:2.23.1"
+        testImplementation "org.apache.logging.log4j:log4j-api:2.23.1"
+        testImplementation "org.apache.logging.log4j:log4j-core:2.23.1"
+    }
+}

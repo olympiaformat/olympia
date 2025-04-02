@@ -1,0 +1,58 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+apply plugin: 'com.google.protobuf'
+
+dependencies {
+    protobuf files("$rootDir/proto/")
+
+    annotationProcessor "org.immutables:value:2.10.1"
+    compileOnly "org.immutables:value:2.10.1"
+
+    implementation project(path: ':olympia-bundled-guava', configuration: 'shadow')
+    implementation 'com.google.protobuf:protobuf-java:4.28.3'
+    implementation 'dev.failsafe:failsafe:3.3.2'
+    implementation "com.github.ben-manes.caffeine:caffeine:2.9.3"
+    implementation libs.arrow.vector
+    implementation libs.arrow.algorithm
+    implementation "org.apache.iceberg:iceberg-api:1.8.0"
+    implementation "org.apache.iceberg:iceberg-core:1.8.0"
+    // TODO: figure out what is the common practice, if this should be compileOnly or implementation
+    implementation libs.arrow.memory.netty
+    implementation "io.substrait:core:0.48.0"
+    testImplementation "org.apache.iceberg:iceberg-api:1.8.0:tests"
+    testImplementation "org.apache.iceberg:iceberg-core:1.8.0:tests"
+    testImplementation "org.apache.hadoop:hadoop-client:3.4.1"
+}
+
+configurations {
+    testArtifacts.extendsFrom testImplementation
+}
+
+tasks.register('testJar', Jar) {
+    archiveClassifier.set('test')
+    from sourceSets.test.output
+}
+
+artifacts {
+    testArtifacts testJar
+}
+
+
+protobuf {
+    protoc {
+        // The artifact spec for the Protobuf Compiler
+        artifact = 'com.google.protobuf:protoc:4.28.3'
+    }
+}
