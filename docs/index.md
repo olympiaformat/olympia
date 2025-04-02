@@ -8,7 +8,7 @@ title: Home
 
 Olympia is a storage-only **Open Catalog Format** for big data analytics, ML & AI. 
 It defines a file spec and layout on storage to store and access metadata 
-for commonly used objects in a data lakehouse like Apache Iceberg tables, Substrait views, etc.
+for commonly used objects in a data lakehouse catalog like Apache Iceberg tables, Substrait views, etc.
 
 Olympia is designed for the following key use cases and features:
 
