@@ -51,7 +51,7 @@ avoiding data errors created by inconsistent states across different tables.
 In addition, you can roll back an entire catalog to a specific previous state,
 or export everything in a catalog at a point of time as a snapshot.
 
-### Distributed Transaction
+### Distributed Transactions
 
 Olympia enables advanced transaction semantics like distributed transaction 
 that is had been only available in relational database products like Microsoft SQL Server.
