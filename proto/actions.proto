@@ -23,7 +23,7 @@ package org.format.olympia.proto.actions;
 
 enum ActionType {
   UNKNOWN = 0;
-  LAKEHOUSE_SNOW_NAMESPACES = 1;
+  CATALOG_SNOW_NAMESPACES = 1;
   NAMESPACE_EXISTS = 2;
   NAMESPACE_DESCRIBE = 3;
   NAMESPACE_CREATE = 4;
