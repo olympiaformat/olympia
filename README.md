@@ -1,6 +1,10 @@
 # Olympia Format
 
+![Olympia Logo](https://github.com/olympiaformat/olympia/blob/main/docs/logo/wide.png?raw=true)
+
+
 Olympia is a storage-only open catalog format for big data analytics, ML & AI.
+See [olympiaformat.org](https://olympiaformat.org) for full documentation.
 
 # Development Setup
 
