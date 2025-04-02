@@ -8,6 +8,29 @@ See [olympiaformat.org](https://olympiaformat.org) for full documentation.
 
 # Development Setup
 
+## Java
+
+Olympia Java SDK is built using Gradle and supports Java 11, 17, 21, or 23.
+
+To build and run tests:
+
+```bash
+./gradlew build
+```
+
+To build without running tests:
+
+```bash
+./gradlew build -x test
+```
+
+All Java and Scala code is linted using checkstyle and spotless.
+To fix code style, run:
+
+```bash
+./gradlew spotlessApply
+```
+
 ## Website
 
 The website is built using [mkdocs-material](https://pypi.org/project/mkdocs-material).

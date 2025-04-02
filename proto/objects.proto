@@ -1,0 +1,124 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+option java_multiple_files = true;
+
+package org.format.olympia.proto.objects;
+
+message CatalogDef {
+  string id = 1;
+  uint32 major_version = 2;
+  uint32 order = 3;
+  uint32 namespace_name_max_size_bytes = 4;
+  uint32 table_name_max_size_bytes = 5;
+  uint32 view_name_max_size_bytes = 6;
+  uint64 node_file_max_size_bytes = 7;
+  map<string, string> properties = 8;
+  uint64 txn_ttl_millis = 9;
+  IsolationLevel txn_isolation_level = 10;
+  map<string, string> exported_snapshots = 11;
+}
+
+message NamespaceDef {
+  string id = 1;
+  map<string, string> properties = 2;
+}
+
+message TableDef {
+  string id = 1;
+  string table_type = 2;
+  string table_format = 3;
+  map<string, string> format_properties = 4;
+  map<string, string> properties = 5;
+}
+
+message ViewDef {
+  string id = 1;
+  bool schema_binding = 2;
+  Schema schema = 3;
+  bytes substrait_read_rel = 4;
+  string default_namespace_name = 5;
+  repeated NamespaceObjectFullName referenced_object_full_names = 6;
+  map<string, string> properties = 7;
+}
+
+message DistributedTransactionDef {
+  string id = 1;
+  IsolationLevel isolation_level = 2;
+  string beginning_root_node_file_path = 3;
+  string running_root_node_file_path = 4;
+  uint64 began_at_millis = 5;
+  uint64 expire_at_millis = 6;
+}
+
+message NamespaceObjectFullName {
+  string namespace_name = 1;
+  string name = 2;
+}
+
+message Schema {
+  repeated Column columns = 1;
+}
+
+message Column {
+  uint32 id = 1;
+  string name = 2;
+  DataType type = 3;
+  bool nullable = 4;
+  map<string, string> properties = 5;
+  repeated Column struct_fields = 6;
+  Column map_key = 7;
+  Column map_value = 8;
+  Column list_element = 9;
+}
+
+enum DataType {
+  BOOLEAN = 0;
+  INT2 = 1;
+  INT4 = 2;
+  INT8 = 3;
+  DECIMAL = 4;
+  FLOAT4 = 5;
+  FLOAT8 = 6;
+  CHAR = 7;
+  VARCHAR = 8;
+  DATE = 9;
+  TIME3 = 10;
+  TIME6 = 11;
+  TIME9 = 12;
+  TIMETZ3 = 13;
+  TIMETZ6 = 14;
+  TIMETZ9 = 15;
+  TIMESTAMP3 = 16;
+  TIMESTAMP6 = 17;
+  TIMESTAMP9 = 18;
+  TIMESTAMPTZ3 = 19;
+  TIMESTAMPTZ6 = 20;
+  TIMESTAMPTZ9 = 21;
+  FIXED = 22;
+  BINARY = 23;
+  STRUCT = 24;
+  MAP = 25;
+  LIST = 26;
+}
+
+enum IsolationLevel {
+  SNAPSHOT = 0;
+  SERIALIZABLE = 1;
+}
