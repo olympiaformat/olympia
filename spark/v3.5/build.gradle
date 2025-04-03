@@ -1,0 +1,154 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+String sparkMajorVersion = '3.5'
+String scalaVersion = System.getProperty("scalaVersion") != null ? System.getProperty("scalaVersion") : System.getProperty("defaultScalaVersion")
+
+project(":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}") {
+    apply plugin: 'scala'
+
+    sourceSets {
+        main {
+            scala.srcDirs = ['src/main/scala', 'src/main/java']
+            java.srcDirs = []
+        }
+    }
+
+    dependencies {
+        implementation project(':olympia-core')
+        implementation project(path: ':olympia-bundled-guava', configuration: 'shadow')
+        implementation("org.scala-lang.modules:scala-collection-compat_${scalaVersion}:${libs.versions.scala.collection.compat.get()}")
+        if (scalaVersion == '2.12') {
+            // scala-collection-compat_2.12 pulls scala 2.12.17 and we need 2.12.18 for JDK 21 support
+            implementation 'org.scala-lang:scala-library:2.12.18'
+        }
+
+        compileOnly("org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark.hive35.get()}")
+
+        testImplementation libs.junit.jupiter
+    }
+
+    test {
+        useJUnitPlatform()
+    }
+}
+
+project(":olympia-spark:olympia-spark-extensions-${sparkMajorVersion}_${scalaVersion}") {
+    apply plugin: 'antlr'
+    apply plugin: 'java-library'
+    apply plugin: 'scala'
+
+    configurations {
+        /*
+         The Gradle Antlr plugin erroneously adds both antlr-build and runtime dependencies to the runtime path. This
+         bug https://github.com/gradle/gradle/issues/820 exists because older versions of Antlr do not have separate
+         runtime and implementation dependencies and they do not want to break backwards compatibility. So to only end up with
+         the runtime dependency on the runtime classpath we remove the dependencies added by the plugin here. Then add
+         the runtime dependency back to only the runtime configuration manually.
+        */
+        implementation {
+            extendsFrom = extendsFrom.findAll { it != configurations.antlr }
+        }
+    }
+
+    dependencies {
+        implementation project(':olympia-core')
+        implementation("org.scala-lang.modules:scala-collection-compat_${scalaVersion}:${libs.versions.scala.collection.compat.get()}")
+        if (scalaVersion == '2.12') {
+            // scala-collection-compat_2.12 pulls scala 2.12.17 and we need 2.12.18 for JDK 21 support
+            implementation 'org.scala-lang:scala-library:2.12.18'
+        }
+
+        compileOnly "org.scala-lang:scala-library"
+        compileOnly project(":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}")
+        compileOnly("org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark.hive35.get()}")
+
+        testImplementation project(path: ":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}")
+        testImplementation libs.junit.jupiter
+
+        antlr libs.antlr.antlr4
+    }
+
+    test {
+        useJUnitPlatform()
+    }
+
+    generateGrammarSource {
+        maxHeapSize = "64m"
+        arguments += ['-visitor', '-package', 'org.apache.spark.sql.catalyst.parser.extensions']
+    }
+}
+
+project(":olympia-spark:olympia-spark-runtime-${sparkMajorVersion}_${scalaVersion}") {
+    apply plugin: 'com.gradleup.shadow'
+    tasks.jar.dependsOn tasks.shadowJar
+
+    sourceSets {
+        integration {
+            java.srcDir "$projectDir/src/integration/java"
+        }
+    }
+
+    dependencies {
+        implementation project(":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}")
+        implementation project(":olympia-spark:olympia-spark-extensions-${sparkMajorVersion}_${scalaVersion}")
+
+        integrationImplementation "org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark.hive35.get()}"
+        integrationImplementation libs.junit.jupiter
+        integrationImplementation project(path: ":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}")
+        integrationImplementation project(path: ":olympia-spark:olympia-spark-extensions-${sparkMajorVersion}_${scalaVersion}")
+
+        integrationCompileOnly project(":olympia-spark:olympia-spark-extensions-${sparkMajorVersion}_${scalaVersion}")
+        integrationCompileOnly project(":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}")
+    }
+
+    shadowJar {
+        configurations = [project.configurations.runtimeClasspath]
+
+        zip64 true
+
+        // include the LICENSE and NOTICE files for the shaded Jar
+        from(projectDir) {
+            include 'LICENSE'
+            include 'NOTICE'
+        }
+
+        // Relocate dependencies to avoid conflicts
+        relocate 'com.google.errorprone', 'org.format.olympia.shaded.com.google.errorprone'
+        relocate 'com.google.flatbuffers', 'org.format.olympia.shaded.com.google.flatbuffers'
+        relocate 'com.google.protobuf', 'org.format.olympia.shaded.com.google.protobuf'
+        relocate 'com.github.benmanes', 'org.format.olympia.shaded.com.github.benmanes'
+        relocate 'com.fasterxml', 'org.format.olympia.shaded.com.fasterxml'
+        relocate 'com.ibm', 'org.format.olympia.shaded.com.fasterxml'
+        // relocate Arrow and related deps to shade org.format.olympia specific version
+        relocate 'org.apache.arrow', 'org.format.olympia.shaded.org.apache.arrow'
+
+        archiveClassifier.set(null)
+    }
+
+    task integrationTest(type: Test) {
+        useJUnitPlatform()
+        description = "Test Spark3 Runtime Jar against Spark ${sparkMajorVersion}"
+        group = "verification"
+        jvmArgs += project.property('extraJvmArgs')
+        testClassesDirs = sourceSets.integration.output.classesDirs
+        classpath = sourceSets.integration.runtimeClasspath
+    }
+
+    check.dependsOn integrationTest
+
+    jar {
+        enabled = false
+    }
+}
