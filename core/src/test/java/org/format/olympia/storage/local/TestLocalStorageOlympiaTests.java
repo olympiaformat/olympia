@@ -24,7 +24,7 @@ import org.format.olympia.storage.LiteralURI;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
 
-public class TestLocalStorageOlympia extends OlympiaTests {
+public class TestLocalStorageOlympiaTests extends OlympiaTests {
 
   @TempDir private File tempDir;
 
