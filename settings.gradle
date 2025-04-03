@@ -16,6 +16,8 @@ rootProject.name = 'olympia'
 
 include 'bundled-guava'
 include 'core'
+include 's3'
 
 project(':bundled-guava').name = 'olympia-bundled-guava'
 project(':core').name = 'olympia-core'
+project(':s3').name = 'olympia-s3'
