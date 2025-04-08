@@ -21,7 +21,7 @@ on:
 env:
   DOCKER_IMAGE_TAG: olympia-gravitino-irc
   DOCKER_IMAGE_VERSION: latest
-  DOCKER_REPOSITORY: olympia
+  DOCKER_REPOSITORY: olympiaformat
 
 jobs:
   build:
