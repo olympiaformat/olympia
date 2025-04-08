@@ -175,8 +175,7 @@ public class OlympiaIcebergTableOperations implements TableOperations, Serializa
       try {
         Olympia.commitTransaction(storage, transaction);
       } catch (StorageAtomicSealFailureException e) {
-        throw new CommitFailedException(
-            e, "Cannot commit, detected conflicting transaction");
+        throw new CommitFailedException(e, "Cannot commit, detected conflicting transaction");
       }
       // begin a new transaction since the previous one is already committed
       transaction = Olympia.beginTransaction(storage);

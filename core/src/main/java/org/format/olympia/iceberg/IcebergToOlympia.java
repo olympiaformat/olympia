@@ -40,8 +40,7 @@ public class IcebergToOlympia {
 
   public static IcebergNamespaceInfo parseNamespace(
       Namespace namespace, OlympiaIcebergCatalogProperties catalogProperties) {
-    ValidationUtil.checkArgument(
-        !namespace.isEmpty(), "Empty namespace is not allowed");
+    ValidationUtil.checkArgument(!namespace.isEmpty(), "Empty namespace is not allowed");
 
     if (!catalogProperties.systemNamespaceName().equals(namespace.level(0))) {
       ValidationUtil.checkArgument(
@@ -82,8 +81,7 @@ public class IcebergToOlympia {
       TableIdentifier tableIdentifier, OlympiaIcebergCatalogProperties catalogProperties) {
     Namespace namespace = tableIdentifier.namespace();
 
-    ValidationUtil.checkArgument(
-        !namespace.isEmpty(), "Empty namespace is not allowed");
+    ValidationUtil.checkArgument(!namespace.isEmpty(), "Empty namespace is not allowed");
 
     if (!catalogProperties.systemNamespaceName().equals(namespace.level(0))) {
       ValidationUtil.checkArgument(
