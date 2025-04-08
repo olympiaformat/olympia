@@ -39,7 +39,7 @@ RUN curl -L "https://downloads.apache.org/incubator/gravitino/${GRAVITINO_VERSIO
 # Copy the JAR and configuration file directly to the target location
 # TODO: should ideally just copy the minimum list of dependency jars, instead of the Spark runtime
 COPY --chown=olympia:olympia spark/v3.5/spark-runtime/build/libs/olympia-spark-runtime-3.5_2.12-*.jar ${GRAVITINO_HOME}/libs/
-COPY --chown=olympia:olympia docker/olympia-gravitino-irc/gravitino-iceberg-rest-server.conf ${GRAVITINO_HOME}/conf/
+COPY --chown=olympia:olympia docker/gravitino/gravitino-iceberg-rest-server.conf ${GRAVITINO_HOME}/conf/
 
 # Ensure olympia gets all file permissions under workdir
 RUN chown -R olympia:olympia $WORK_DIR && \
