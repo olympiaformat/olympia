@@ -13,10 +13,13 @@
  */
 package org.format.olympia.tree;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
+import org.format.olympia.action.Action;
+import org.format.olympia.relocated.com.google.common.collect.ImmutableList;
 import org.format.olympia.relocated.com.google.common.collect.Lists;
 import org.format.olympia.relocated.com.google.common.collect.Maps;
 
@@ -27,6 +30,8 @@ public class BasicTreeNode implements TreeNode {
   private NodeKeyTableRow leftmostChild;
   private String path;
   private Long createdAtMillis;
+  private Iterable<Action> actions = ImmutableList.of();
+  private boolean actionSet;
 
   public BasicTreeNode() {
     this.pendingChanges = Maps.newTreeMap();
@@ -71,6 +76,11 @@ public class BasicTreeNode implements TreeNode {
       count += (slice.endIndex() - slice.startIndex() + 1);
     }
     return count;
+  }
+
+  @Override
+  public int numActions() {
+    return 0;
   }
 
   @Override
@@ -156,9 +166,61 @@ public class BasicTreeNode implements TreeNode {
   }
 
   @Override
+  public boolean isDirty() {
+    return !pendingChanges().isEmpty()
+        || getVectorSlices().size() > 1
+        || getLeftmostChild().isPresent()
+        || actionSet;
+  }
+
+  @Override
+  public void addVectorSlice(String sourcePath, int startIndex, int endIndex) {
+    getVectorSlices()
+        .add(
+            ImmutableVectorSlice.builder()
+                .path(sourcePath)
+                .startIndex(startIndex)
+                .endIndex(endIndex)
+                .build());
+  }
+
+  @Override
+  public void addInMemoryChange(String key, String value, TreeNode child) {
+    NodeKeyTableRow row =
+        ImmutableNodeKeyTableRow.builder()
+            .key(Optional.ofNullable(key))
+            .value(Optional.ofNullable(value))
+            .child(Optional.ofNullable(child))
+            .build();
+
+    if (key == null) {
+      setLeftmostChild(row);
+    } else {
+      pendingChanges().put(key, row);
+    }
+  }
+
+  @Override
   public void clear() {
     pendingChanges.clear();
     vectorSlices.clear();
     leftmostChild = null;
+  }
+
+  @Override
+  public Iterable<Action> actions() {
+    return actions;
+  }
+
+  @Override
+  public void setActions(Collection<Action> actions) {
+    this.actions = ImmutableList.copyOf(actions);
+    this.actionSet = true;
+  }
+
+  @Override
+  public void clearActions() {
+    this.actions = null;
+    this.actionSet = false;
   }
 }

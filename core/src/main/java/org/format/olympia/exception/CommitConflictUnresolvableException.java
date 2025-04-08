@@ -11,17 +11,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.format.olympia;
+package org.format.olympia.exception;
 
-import com.google.protobuf.Message;
-import java.util.Optional;
-import org.format.olympia.proto.actions.ActionType;
-import org.immutables.value.Value;
+public class CommitConflictUnresolvableException extends OlympiaRuntimeException {
 
-@Value.Immutable
-public interface Action {
+  public CommitConflictUnresolvableException(Throwable cause) {
+    super(cause);
+  }
 
-  ActionType type();
+  public CommitConflictUnresolvableException(Throwable cause, String message, Object... args) {
+    super(cause, message, args);
+  }
 
-  Optional<Message> def();
+  public CommitConflictUnresolvableException(String message, Object... args) {
+    super(message, args);
+  }
 }

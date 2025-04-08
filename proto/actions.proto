@@ -21,33 +21,41 @@ option java_multiple_files = true;
 
 package org.format.olympia.proto.actions;
 
-enum ActionType {
-  UNKNOWN = 0;
-  CATALOG_SNOW_NAMESPACES = 1;
-  NAMESPACE_EXISTS = 2;
-  NAMESPACE_DESCRIBE = 3;
-  NAMESPACE_CREATE = 4;
-  NAMESPACE_ALTER = 5;
-  NAMESPACE_ALTER_SET_PROPERTIES = 6;
-  NAMESPACE_ALTER_UNSET_PROPERTIES = 7;
-  NAMESPACE_DROP = 8;
-  NAMESPACE_SHOW_TABLES = 9;
-  NAMESPACE_SHOW_VIEWS = 10;
-  TABLE_EXISTS = 11;
-  TABLE_DESCRIBE = 12;
-  TABLE_CREATE = 13;
-  TABLE_ALTER = 14;
-  TABLE_ALTER_ADD_COLUMNS = 15;
-  TABLE_ALTER_REMOVE_COLUMNS = 16;
-  TABLE_INSERT = 17;
-  TABLE_UPDATE = 18;
-  TABLE_DELETE = 19;
-  TABLE_DROP = 20;
-  VIEW_EXISTS = 21;
-  VIEW_DESCRIBE = 22;
-  VIEW_CREATE = 23;
-  VIEW_REPLACE = 24;
-  VIEW_DROP = 25;
+import "objects.proto";
+
+message ActionDef {
+  enum ActionType {
+    CATALOG_SNOW_NAMESPACES = 0;
+    NAMESPACE_EXISTS = 1;
+    NAMESPACE_DESCRIBE = 2;
+    NAMESPACE_CREATE = 3;
+    NAMESPACE_ALTER = 4;
+    NAMESPACE_ALTER_SET_PROPERTIES = 5;
+    NAMESPACE_ALTER_UNSET_PROPERTIES = 6;
+    NAMESPACE_DROP = 7;
+    NAMESPACE_SHOW_TABLES = 8;
+    NAMESPACE_SHOW_VIEWS = 9;
+    TABLE_EXISTS = 10;
+    TABLE_DESCRIBE = 11;
+    TABLE_SELECT = 12;
+    TABLE_CREATE = 13;
+    TABLE_ALTER = 14;
+    TABLE_ALTER_ADD_COLUMNS = 15;
+    TABLE_ALTER_REMOVE_COLUMNS = 16;
+    TABLE_INSERT = 17;
+    TABLE_UPDATE = 18;
+    TABLE_DELETE = 19;
+    TABLE_DROP = 20;
+    VIEW_EXISTS = 21;
+    VIEW_DESCRIBE = 22;
+    VIEW_CREATE = 23;
+    VIEW_REPLACE = 24;
+    VIEW_DROP = 25;
+  }
+
+  org.format.olympia.proto.objects.ObjectDef object_def = 1;
+  ActionType type = 2;
+  bytes def = 3;
 }
 
 message NamespaceSetPropertiesDef {
@@ -66,12 +74,30 @@ message TableAlterRemoveColumnsDef {
   repeated string column_names = 1;
 }
 
+message TableInsertDef {
+  repeated string iceberg_data_files_json = 1;
+  repeated TableSelectContext selects = 2;
+}
+
 message TableUpdateDef {
-  repeated string added_data_file_locations = 1;
-  repeated string removed_data_file_locations = 2;
+  repeated string iceberg_added_data_files_json = 1;
+  repeated string iceberg_removed_data_files_json = 2;
+  string iceberg_expression_json = 3;
+  repeated TableSelectContext selects = 4;
+}
+
+message TableDeleteDef {
+  repeated string iceberg_data_files_json = 1;
+  repeated TableSelectContext selects = 2;
 }
 
 message TableSelectDef {
   repeated string column_names = 1;
-  bytes substrait_expression = 2;
+  string iceberg_expression_json = 2;
+}
+
+message TableSelectContext {
+  string namespaceName = 1;
+  string tableName = 2;
+  TableSelectDef select_context = 3;
 }

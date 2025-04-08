@@ -14,10 +14,8 @@
 package org.format.olympia;
 
 import com.google.common.base.Throwables;
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Maps;
-import com.google.common.hash.HashCode;
-import com.google.common.hash.HashFunction;
-import com.google.common.hash.Hashing;
 import com.google.common.io.ByteStreams;
 import com.google.common.io.CharStreams;
 import com.google.common.io.CountingOutputStream;
@@ -34,14 +32,12 @@ public class GuavaClasses {
    */
   static {
     Throwables.class.getName();
-    HashCode.class.getName();
-    HashFunction.class.getName();
-    Hashing.class.getName();
     Maps.class.getName();
     CharStreams.class.getName();
     CountingOutputStream.class.getName();
     ByteStreams.class.getName();
     MoreExecutors.class.getName();
     Files.class.getName();
+    HashMultimap.class.getName();
   }
 }

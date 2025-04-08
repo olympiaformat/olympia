@@ -13,8 +13,10 @@
  */
 package org.apache.spark.sql.execution.datasources.v2
 
+import org.apache.iceberg.spark.SparkCatalog
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.format.olympia.iceberg.OlympiaIcebergCatalog
 
 case class BeginTransactionExec() extends LeafV2CommandExec {
 
@@ -22,8 +24,16 @@ case class BeginTransactionExec() extends LeafV2CommandExec {
 
   override protected def run(): Seq[InternalRow] = {
     session.sessionState.catalogManager.currentCatalog match {
+      case catalog: SparkCatalog =>
+        catalog.icebergCatalog() match {
+          case icebergCatalog: OlympiaIcebergCatalog => icebergCatalog.beginCatalogTransaction()
+          case _ =>
+            throw new UnsupportedOperationException(
+              "Cannot begin transaction in non-Olympia Iceberg catalog")
+        }
       case _ =>
-        throw new UnsupportedOperationException("Cannot begin transaction in non-Olympia catalog")
+        throw new UnsupportedOperationException(
+          "Cannot begin transaction in non-Iceberg Spark catalog")
     }
     Seq.empty
   }

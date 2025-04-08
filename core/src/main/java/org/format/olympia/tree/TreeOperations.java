@@ -13,6 +13,7 @@
  */
 package org.format.olympia.tree;
 
+import com.google.protobuf.Message;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -36,11 +37,17 @@ import org.apache.arrow.vector.util.Text;
 import org.format.olympia.FileLocations;
 import org.format.olympia.ObjectDefinitions;
 import org.format.olympia.ObjectKeys;
+import org.format.olympia.Transaction;
+import org.format.olympia.action.Action;
+import org.format.olympia.action.AnalyzeActionConflicts;
+import org.format.olympia.action.ConflictAnalysisResult;
+import org.format.olympia.exception.CommitConflictUnresolvableException;
 import org.format.olympia.exception.OlympiaRuntimeException;
 import org.format.olympia.exception.StorageAtomicSealFailureException;
 import org.format.olympia.exception.StorageFileOpenFailureException;
 import org.format.olympia.exception.StorageReadFailureException;
 import org.format.olympia.exception.StorageWriteFailureException;
+import org.format.olympia.proto.actions.ActionDef;
 import org.format.olympia.proto.objects.CatalogDef;
 import org.format.olympia.relocated.com.google.common.base.Strings;
 import org.format.olympia.relocated.com.google.common.collect.Lists;
@@ -132,6 +139,7 @@ public class TreeOperations {
         VarCharVector valueVector = (VarCharVector) root.getVector(NODE_FILE_VALUE_COLUMN_INDEX);
         int dataStartIndex = -1;
         int numKeys = 0;
+        int numActions = 0;
         for (int i = 0; i < root.getRowCount(); ++i) {
           if (keyVector.isNull(i)) {
             dataStartIndex = i;
@@ -150,17 +158,14 @@ public class TreeOperations {
             treeRoot.setRollbackFromRootNodeFilePath(value.toString());
           } else if (ObjectKeys.NUMBER_OF_KEYS.equals(key.toString())) {
             numKeys = Integer.parseInt(value.toString());
+          } else if (ObjectKeys.NUMBER_OF_ACTIONS.equals(key.toString())) {
+            numActions = Integer.parseInt(value.toString());
           }
         }
 
         if (numKeys != 0) {
           treeRoot.addVectorSlice(path, dataStartIndex, dataStartIndex + numKeys);
         }
-
-        //        ValidationUtil.checkState(
-        //            numKeys == treeRoot.numKeys(),
-        //            "Recorded number of keys do not match the actual node key table size, the node
-        // file might be corrupted");
       }
     } catch (IOException e) {
       throw new StorageReadFailureException(e);
@@ -251,6 +256,23 @@ public class TreeOperations {
     }
   }
 
+  private static void writeActionRow(
+      Action action,
+      VarCharVector keyVector,
+      VarCharVector valueVector,
+      VarCharVector childVector,
+      int index) {
+    keyVector.setSafe(index, action.objectKey().getBytes(StandardCharsets.UTF_8));
+
+    ActionDef actionDef =
+        ActionDef.newBuilder()
+            .setType(action.type())
+            .setDef(action.def().map(Message::toByteString).orElse(null))
+            .build();
+    valueVector.setSafe(index, actionDef.toByteArray());
+    childVector.setNull(index);
+  }
+
   private static void writeNodeFile(
       CatalogStorage storage, AtomicOutputStream stream, TreeNode node, long createdAtMillis) {
     BufferAllocator allocator = storage.getArrowAllocator();
@@ -279,6 +301,12 @@ public class TreeOperations {
       writeNodeTableRow(row, keyVector, valueVector, childVector, index++);
     }
 
+    //    if (node instanceof TreeRoot) {
+    //      for (Action action : node.actions()) {
+    //        writeActionRow(action, keyVector, valueVector, childVector, index++);
+    //      }
+    //    }
+
     keyVector.setValueCount(index);
     valueVector.setValueCount(index);
     childVector.setValueCount(index);
@@ -295,7 +323,7 @@ public class TreeOperations {
     }
   }
 
-  public static void tryWriteRootNodeVersionHintFile(CatalogStorage storage, long rootVersion) {
+  public static void tryWriteLatestVersionFile(CatalogStorage storage, long rootVersion) {
     try (OutputStream stream = storage.startOverwrite(FileLocations.LATEST_VERSION_FILE_PATH)) {
       stream.write(Long.toString(rootVersion).getBytes(StandardCharsets.UTF_8));
     } catch (StorageWriteFailureException | IOException e) {
@@ -558,8 +586,8 @@ public class TreeOperations {
       updatePathPointers(path);
     }
 
-    if (needsSplit(leafNode, root.getOrder())) {
-      splitAndPropagateChanges(storage, path, root.getOrder() - 1);
+    if (needsSplit(leafNode, root.order())) {
+      splitAndPropagateChanges(storage, path, root.order() - 1);
     }
   }
 
@@ -688,11 +716,12 @@ public class TreeOperations {
                   keyVector, comparator, searchKeyVector, NODE_FILE_KEY_COLUMN_INDEX, 0, searchEnd);
 
           if (result >= 0) {
-            return createSearchResult(storage, keyVector, valueVector, childVector, result);
+            return createNodeSearchResult(storage, keyVector, valueVector, childVector, result);
           } else {
             int floorIndex = -result - 2;
             if (floorIndex >= startIndex && floorIndex < endIndex) {
-              return createSearchResult(storage, keyVector, valueVector, childVector, floorIndex);
+              return createNodeSearchResult(
+                  storage, keyVector, valueVector, childVector, floorIndex);
             }
           }
         }
@@ -898,7 +927,7 @@ public class TreeOperations {
         .build();
   }
 
-  private static NodeSearchResult createSearchResult(
+  private static NodeSearchResult createNodeSearchResult(
       CatalogStorage storage,
       VarCharVector keyVector,
       VarCharVector valueVector,
@@ -925,5 +954,30 @@ public class TreeOperations {
         .value(Optional.ofNullable(value))
         .nodePointer(Optional.ofNullable(child))
         .build();
+  }
+
+  public static void resolveConflictingRootsInTransaction(
+      CatalogStorage storage, Transaction transaction) {
+    for (Action baseAction : transaction.beginningRoot().actions()) {
+      for (Action newAction : transaction.runningRoot().actions()) {
+        ConflictAnalysisResult analysisResult =
+            AnalyzeActionConflicts.analyze(newAction, baseAction, transaction.isolationLevel());
+        if (analysisResult.hasConflict()) {
+          if (!analysisResult.canResolveConflict()) {
+            throw new CommitConflictUnresolvableException(
+                "Cannot resolve conflict between %s and %s", baseAction, newAction);
+          } else {
+            Optional<String> newBaseValue =
+                searchValue(storage, transaction.beginningRoot(), newAction.objectKey());
+            ValidationUtil.checkArgument(
+                newBaseValue.isPresent(),
+                "Cannot find object %s in beginning root %s",
+                baseAction.objectKey(),
+                transaction.beginningRoot().path());
+            // TODO: apply change to get new key values and set the new value using the new key
+          }
+        }
+      }
+    }
   }
 }

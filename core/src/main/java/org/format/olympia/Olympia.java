@@ -13,25 +13,27 @@
  */
 package org.format.olympia;
 
-import java.util.Collection;
+import com.google.protobuf.Message;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.format.olympia.action.Action;
+import org.format.olympia.action.ImmutableAction;
+import org.format.olympia.exception.CommitConflictUnresolvableException;
 import org.format.olympia.exception.CommitFailureException;
 import org.format.olympia.exception.NonEmptyNamespaceException;
 import org.format.olympia.exception.ObjectAlreadyExistsException;
 import org.format.olympia.exception.ObjectNotFoundException;
-import org.format.olympia.proto.actions.ActionType;
-import org.format.olympia.proto.actions.NamespaceSetPropertiesDef;
+import org.format.olympia.exception.StorageAtomicSealFailureException;
+import org.format.olympia.proto.actions.ActionDef.ActionType;
 import org.format.olympia.proto.objects.CatalogDef;
-import org.format.olympia.proto.objects.Column;
 import org.format.olympia.proto.objects.DistributedTransactionDef;
 import org.format.olympia.proto.objects.NamespaceDef;
+import org.format.olympia.proto.objects.ObjectDef.ObjectType;
 import org.format.olympia.proto.objects.TableDef;
 import org.format.olympia.proto.objects.ViewDef;
 import org.format.olympia.relocated.com.google.common.collect.ImmutableMap;
-import org.format.olympia.relocated.com.google.common.collect.Lists;
 import org.format.olympia.storage.CatalogStorage;
 import org.format.olympia.tree.BasicTreeRoot;
 import org.format.olympia.tree.NodeKeyTableRow;
@@ -55,8 +57,9 @@ public class Olympia {
     BasicTreeRoot root = new BasicTreeRoot();
     root.setCatalogDefFilePath(catalogDefFilePath);
     String rootNodeFilePath = FileLocations.rootNodeFilePath(0);
+    // TODO: is it worth recording CATALOG_CREATE action?
     TreeOperations.writeRootNodeFile(storage, rootNodeFilePath, root);
-    TreeOperations.tryWriteRootNodeVersionHintFile(storage, 0);
+    TreeOperations.tryWriteLatestVersionFile(storage, 0);
   }
 
   public static Transaction beginTransaction(CatalogStorage storage) {
@@ -85,18 +88,41 @@ public class Olympia {
     ValidationUtil.checkArgument(
         !transaction.runningRoot().pendingChanges().isEmpty(),
         "There is no change to be committed");
-    ValidationUtil.checkState(
-        transaction.beginningRoot().path().isPresent(),
-        "Cannot find persisted storage path for beginning root");
 
-    String beginningRootNodeFilePath = transaction.beginningRoot().path().get();
+    TreeRoot beginningRoot = transaction.beginningRoot();
+    TreeRoot runningRoot = transaction.runningRoot();
+    ValidationUtil.checkState(
+        beginningRoot.path().isPresent(), "Cannot find persisted storage path for beginning root");
+    String beginningRootNodeFilePath = beginningRoot.path().get();
+
     long beginningRootVersion = FileLocations.versionFromNodeFilePath(beginningRootNodeFilePath);
     long nextRootVersion = beginningRootVersion + 1;
     String nextVersionFilePath = FileLocations.rootNodeFilePath(nextRootVersion);
-    transaction.runningRoot().setPreviousRootNodeFilePath(beginningRootNodeFilePath);
+    runningRoot.setPreviousRootNodeFilePath(beginningRootNodeFilePath);
+    runningRoot.setActions(transaction.actions());
 
-    TreeOperations.writeRootNodeFile(storage, nextVersionFilePath, transaction.runningRoot());
-    TreeOperations.tryWriteRootNodeVersionHintFile(storage, nextRootVersion);
+    boolean commitSucceeded = false;
+    while (!commitSucceeded) {
+      try {
+        TreeOperations.writeRootNodeFile(storage, nextVersionFilePath, transaction.runningRoot());
+        commitSucceeded = true;
+      } catch (StorageAtomicSealFailureException e) {
+        beginningRootVersion = nextRootVersion;
+        beginningRootNodeFilePath = FileLocations.rootNodeFilePath(nextRootVersion);
+        beginningRoot = TreeOperations.readRootNodeFile(storage, beginningRootNodeFilePath);
+        nextRootVersion = beginningRootVersion + 1;
+        nextVersionFilePath = FileLocations.rootNodeFilePath(nextRootVersion);
+        transaction.setBeginningRoot(beginningRoot);
+
+        try {
+          TreeOperations.resolveConflictingRootsInTransaction(storage, transaction);
+        } catch (CommitConflictUnresolvableException e2) {
+          throw new CommitFailureException(e2);
+        }
+      }
+    }
+
+    TreeOperations.tryWriteLatestVersionFile(storage, nextRootVersion);
     transaction.runningRoot().setPath(nextVersionFilePath);
     transaction.setCommitted();
   }
@@ -153,8 +179,13 @@ public class Olympia {
             .filter(key -> ObjectKeys.isNamespaceKey(key, catalogDef))
             .map(key -> ObjectKeys.namespaceNameFromKey(key, catalogDef))
             .collect(Collectors.toList());
-    transaction.addAction(
-        ImmutableAction.builder().type(ActionType.CATALOG_SNOW_NAMESPACES).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.CATALOG)
+            .type(ActionType.CATALOG_SNOW_NAMESPACES)
+            .objectKey(ObjectKeys.CATALOG_DEFINITION)
+            .build();
+    transaction.addAction(action);
     return namespaces;
   }
 
@@ -164,7 +195,14 @@ public class Olympia {
     String namespaceKey = ObjectKeys.namespaceKey(namespaceName, catalogDef);
     boolean exists =
         TreeOperations.searchValue(storage, transaction.runningRoot(), namespaceKey).isPresent();
-    transaction.addAction(ImmutableAction.builder().type(ActionType.NAMESPACE_EXISTS).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.NAMESPACE)
+            .namespaceName(namespaceName)
+            .objectKey(namespaceKey)
+            .type(ActionType.NAMESPACE_EXISTS)
+            .build();
+    transaction.addAction(action);
     return exists;
   }
 
@@ -179,7 +217,14 @@ public class Olympia {
       throw new ObjectNotFoundException("Namespace %s does not exist", namespaceName);
     }
     NamespaceDef def = ObjectDefinitions.readNamespaceDef(storage, namespaceDefFilePath.get());
-    transaction.addAction(ImmutableAction.builder().type(ActionType.NAMESPACE_DESCRIBE).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.NAMESPACE)
+            .namespaceName(namespaceName)
+            .objectKey(namespaceKey)
+            .type(ActionType.NAMESPACE_DESCRIBE)
+            .build();
+    transaction.addAction(action);
     return def;
   }
 
@@ -198,7 +243,14 @@ public class Olympia {
     String namespaceDefFilePath = FileLocations.newNamespaceDefFilePath(namespaceName);
     ObjectDefinitions.writeNamespaceDef(storage, namespaceDefFilePath, namespaceName, namespaceDef);
     TreeOperations.setValue(storage, transaction.runningRoot(), namespaceKey, namespaceDefFilePath);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.NAMESPACE_CREATE).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.NAMESPACE)
+            .namespaceName(namespaceName)
+            .objectKey(namespaceKey)
+            .type(ActionType.NAMESPACE_CREATE)
+            .build();
+    transaction.addAction(action);
   }
 
   public static void alterNamespace(
@@ -206,6 +258,23 @@ public class Olympia {
       Transaction transaction,
       String namespaceName,
       NamespaceDef namespaceDef)
+      throws ObjectNotFoundException, CommitFailureException {
+    alterNamespace(
+        storage,
+        transaction,
+        namespaceName,
+        namespaceDef,
+        ActionType.NAMESPACE_ALTER,
+        Optional.empty());
+  }
+
+  public static void alterNamespace(
+      CatalogStorage storage,
+      Transaction transaction,
+      String namespaceName,
+      NamespaceDef namespaceDef,
+      ActionType actionType,
+      Optional<Message> actionDef)
       throws ObjectNotFoundException, CommitFailureException {
     CatalogDef catalogDef = TreeOperations.findCatalogDef(storage, transaction.runningRoot());
     String namespaceKey = ObjectKeys.namespaceKey(namespaceName, catalogDef);
@@ -216,74 +285,15 @@ public class Olympia {
     String namespaceDefFilePath = FileLocations.newNamespaceDefFilePath(namespaceName);
     ObjectDefinitions.writeNamespaceDef(storage, namespaceDefFilePath, namespaceName, namespaceDef);
     TreeOperations.setValue(storage, transaction.runningRoot(), namespaceKey, namespaceDefFilePath);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.NAMESPACE_ALTER).build());
-  }
-
-  public static void alterNamespaceSetProperties(
-      CatalogStorage storage,
-      Transaction transaction,
-      String namespaceName,
-      Collection<Pair<String, String>> keyValuePairs) {
-    CatalogDef catalogDef = TreeOperations.findCatalogDef(storage, transaction.runningRoot());
-    String namespaceKey = ObjectKeys.namespaceKey(namespaceName, catalogDef);
-    Optional<String> namespaceDefFilePath =
-        TreeOperations.searchValue(storage, transaction.runningRoot(), namespaceKey);
-    if (!namespaceDefFilePath.isPresent()) {
-      throw new ObjectNotFoundException("Namespace %s does not exist", namespaceName);
-    }
-
-    NamespaceDef namespaceDef =
-        ObjectDefinitions.readNamespaceDef(storage, namespaceDefFilePath.get());
-    NamespaceDef.Builder newNamespaceDefBuilder = namespaceDef.toBuilder();
-    List<String> keys = Lists.newArrayList();
-    for (Pair<String, String> keyValuePair : keyValuePairs) {
-      newNamespaceDefBuilder.putProperties(keyValuePair.first(), keyValuePair.second());
-      keys.add(keyValuePair.first());
-    }
-
-    String newNamespaceDefFilePath = FileLocations.newNamespaceDefFilePath(namespaceName);
-    ObjectDefinitions.writeNamespaceDef(
-        storage, newNamespaceDefFilePath, namespaceName, newNamespaceDefBuilder.build());
-    TreeOperations.setValue(
-        storage, transaction.runningRoot(), namespaceKey, newNamespaceDefFilePath);
-    transaction.addAction(
+    Action action =
         ImmutableAction.builder()
-            .type(ActionType.NAMESPACE_ALTER_SET_PROPERTIES)
-            .def(NamespaceSetPropertiesDef.newBuilder().addAllKeys(keys).build())
-            .build());
-  }
-
-  public static void alterNamespaceUnsetProperties(
-      CatalogStorage storage,
-      Transaction transaction,
-      String namespaceName,
-      Collection<String> keys) {
-    CatalogDef catalogDef = TreeOperations.findCatalogDef(storage, transaction.runningRoot());
-    String namespaceKey = ObjectKeys.namespaceKey(namespaceName, catalogDef);
-    Optional<String> namespaceDefFilePath =
-        TreeOperations.searchValue(storage, transaction.runningRoot(), namespaceKey);
-    if (!namespaceDefFilePath.isPresent()) {
-      throw new ObjectNotFoundException("Namespace %s does not exist", namespaceName);
-    }
-
-    NamespaceDef namespaceDef =
-        ObjectDefinitions.readNamespaceDef(storage, namespaceDefFilePath.get());
-    NamespaceDef.Builder newNamespaceDefBuilder = namespaceDef.toBuilder();
-    for (String key : keys) {
-      // TODO: should it fail if key not found?
-      newNamespaceDefBuilder.removeProperties(key);
-    }
-
-    String newNamespaceDefFilePath = FileLocations.newNamespaceDefFilePath(namespaceName);
-    ObjectDefinitions.writeNamespaceDef(
-        storage, newNamespaceDefFilePath, namespaceName, newNamespaceDefBuilder.build());
-    TreeOperations.setValue(
-        storage, transaction.runningRoot(), namespaceKey, newNamespaceDefFilePath);
-    transaction.addAction(
-        ImmutableAction.builder()
-            .type(ActionType.NAMESPACE_ALTER_UNSET_PROPERTIES)
-            .def(NamespaceSetPropertiesDef.newBuilder().addAllKeys(keys).build())
-            .build());
+            .objectType(ObjectType.NAMESPACE)
+            .namespaceName(namespaceName)
+            .objectKey(namespaceKey)
+            .type(actionType)
+            .def(actionDef)
+            .build();
+    transaction.addAction(action);
   }
 
   public static void dropNamespace(
@@ -317,7 +327,15 @@ public class Olympia {
     }
 
     TreeOperations.removeKey(storage, transaction.runningRoot(), namespaceKey);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.NAMESPACE_DROP).build());
+
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.NAMESPACE)
+            .namespaceName(namespaceName)
+            .objectKey(namespaceKey)
+            .type(ActionType.NAMESPACE_DROP)
+            .build();
+    transaction.addAction(action);
   }
 
   public static List<String> showTables(
@@ -334,7 +352,14 @@ public class Olympia {
             .filter(key -> key.startsWith(tableKeyNamespacePrefix))
             .map(key -> ObjectKeys.tableNameFromKey(key, catalogDef))
             .collect(Collectors.toList());
-    transaction.addAction(ImmutableAction.builder().type(ActionType.NAMESPACE_SHOW_TABLES).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.NAMESPACE)
+            .namespaceName(namespaceName)
+            .objectKey(namespaceName)
+            .type(ActionType.NAMESPACE_SHOW_TABLES)
+            .build();
+    transaction.addAction(action);
     return tables;
   }
 
@@ -344,7 +369,15 @@ public class Olympia {
     String tableKey = ObjectKeys.tableKey(namespaceName, tableName, catalogDef);
     boolean exists =
         TreeOperations.searchValue(storage, transaction.runningRoot(), tableKey).isPresent();
-    transaction.addAction(ImmutableAction.builder().type(ActionType.NAMESPACE_SHOW_TABLES).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.TABLE)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(tableName)
+            .objectKey(tableKey)
+            .type(ActionType.TABLE_EXISTS)
+            .build();
+    transaction.addAction(action);
     return exists;
   }
 
@@ -360,7 +393,15 @@ public class Olympia {
           "Namespace %s table %s does not exist", namespaceName, tableName);
     }
     TableDef def = ObjectDefinitions.readTableDef(storage, tableDefFilePath.get());
-    transaction.addAction(ImmutableAction.builder().type(ActionType.TABLE_EXISTS).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.TABLE)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(tableName)
+            .objectKey(tableKey)
+            .type(ActionType.TABLE_DESCRIBE)
+            .build();
+    transaction.addAction(action);
     return def;
   }
 
@@ -385,7 +426,15 @@ public class Olympia {
     String tableDefFilePath = FileLocations.newTableDefFilePath(namespaceName, tableName);
     ObjectDefinitions.writeTableDef(storage, tableDefFilePath, namespaceName, tableName, tableDef);
     TreeOperations.setValue(storage, transaction.runningRoot(), tableKey, tableDefFilePath);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.TABLE_CREATE).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.TABLE)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(tableName)
+            .objectKey(tableKey)
+            .type(ActionType.TABLE_CREATE)
+            .build();
+    transaction.addAction(action);
   }
 
   public static void alterTable(
@@ -394,6 +443,25 @@ public class Olympia {
       String namespaceName,
       String tableName,
       TableDef tableDef)
+      throws ObjectNotFoundException, CommitFailureException {
+    alterTable(
+        storage,
+        transaction,
+        namespaceName,
+        tableName,
+        tableDef,
+        ActionType.TABLE_ALTER,
+        Optional.empty());
+  }
+
+  public static void alterTable(
+      CatalogStorage storage,
+      Transaction transaction,
+      String namespaceName,
+      String tableName,
+      TableDef tableDef,
+      ActionType actionType,
+      Optional<Message> actionDef)
       throws ObjectNotFoundException, CommitFailureException {
     CatalogDef catalogDef = TreeOperations.findCatalogDef(storage, transaction.runningRoot());
     String namespaceKey = ObjectKeys.namespaceKey(namespaceName, catalogDef);
@@ -409,34 +477,17 @@ public class Olympia {
     String tableDefFilePath = FileLocations.newTableDefFilePath(namespaceName, tableName);
     ObjectDefinitions.writeTableDef(storage, tableDefFilePath, namespaceName, tableName, tableDef);
     TreeOperations.setValue(storage, transaction.runningRoot(), tableKey, tableDefFilePath);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.TABLE_ALTER).build());
-  }
 
-  public static void alterTableAddColumns(
-      CatalogStorage storage,
-      Transaction transaction,
-      String namespaceName,
-      String tableName,
-      Collection<Column> columns) {
-    // TODO
-  }
-
-  public static void alterTableRemoveColumns(
-      CatalogStorage storage,
-      Transaction transaction,
-      String namespaceName,
-      String tableName,
-      Collection<Column> columns) {
-    // TODO
-  }
-
-  public static void modifyTableInsert(
-      CatalogStorage storage,
-      Transaction transaction,
-      String namespaceName,
-      String tableName,
-      Collection<String> dataFileLocations) {
-    // TODO
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.TABLE)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(tableName)
+            .objectKey(tableKey)
+            .type(actionType)
+            .def(actionDef)
+            .build();
+    transaction.addAction(action);
   }
 
   public static void dropTable(
@@ -450,7 +501,16 @@ public class Olympia {
     }
 
     TreeOperations.removeKey(storage, transaction.runningRoot(), tableKey);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.TABLE_DROP).build());
+
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.TABLE)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(tableName)
+            .objectKey(tableKey)
+            .type(ActionType.TABLE_DROP)
+            .build();
+    transaction.addAction(action);
   }
 
   public static List<String> showViews(
@@ -466,7 +526,15 @@ public class Olympia {
             .filter(key -> key.startsWith(viewKeyNamespacePrefix))
             .map(key -> ObjectKeys.viewNameFromKey(key, catalogDef))
             .collect(Collectors.toList());
-    transaction.addAction(ImmutableAction.builder().type(ActionType.NAMESPACE_SHOW_VIEWS).build());
+
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.NAMESPACE)
+            .namespaceName(namespaceName)
+            .objectKey(ObjectKeys.namespaceKey(namespaceName, catalogDef))
+            .type(ActionType.NAMESPACE_SHOW_VIEWS)
+            .build();
+    transaction.addAction(action);
     return views;
   }
 
@@ -476,7 +544,15 @@ public class Olympia {
     String viewKey = ObjectKeys.viewKey(namespaceName, viewName, catalogDef);
     boolean exists =
         TreeOperations.searchValue(storage, transaction.runningRoot(), viewKey).isPresent();
-    transaction.addAction(ImmutableAction.builder().type(ActionType.VIEW_EXISTS).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.VIEW)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(viewName)
+            .objectKey(viewKey)
+            .type(ActionType.VIEW_EXISTS)
+            .build();
+    transaction.addAction(action);
     return exists;
   }
 
@@ -492,7 +568,16 @@ public class Olympia {
           "Namespace %s view %s does not exist", namespaceName, viewName);
     }
     ViewDef def = ObjectDefinitions.readViewDef(storage, viewDefFilePath.get());
-    transaction.addAction(ImmutableAction.builder().type(ActionType.VIEW_DESCRIBE).build());
+
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.VIEW)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(viewName)
+            .objectKey(viewKey)
+            .type(ActionType.VIEW_DESCRIBE)
+            .build();
+    transaction.addAction(action);
     return def;
   }
 
@@ -517,7 +602,15 @@ public class Olympia {
     String viewDefFilePath = FileLocations.newViewDefFilePath(namespaceName, viewName);
     ObjectDefinitions.writeViewDef(storage, viewDefFilePath, namespaceName, viewName, viewDef);
     TreeOperations.setValue(storage, transaction.runningRoot(), viewKey, viewDefFilePath);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.VIEW_CREATE).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.VIEW)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(viewName)
+            .objectKey(viewKey)
+            .type(ActionType.VIEW_CREATE)
+            .build();
+    transaction.addAction(action);
   }
 
   public static void replaceView(
@@ -540,7 +633,15 @@ public class Olympia {
     String viewDefFilePath = FileLocations.newViewDefFilePath(namespaceName, viewName);
     ObjectDefinitions.writeViewDef(storage, viewDefFilePath, namespaceName, viewName, viewDef);
     TreeOperations.setValue(storage, transaction.runningRoot(), viewKey, viewDefFilePath);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.VIEW_REPLACE).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.VIEW)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(viewName)
+            .objectKey(viewKey)
+            .type(ActionType.VIEW_REPLACE)
+            .build();
+    transaction.addAction(action);
   }
 
   public static void dropView(
@@ -553,6 +654,14 @@ public class Olympia {
     }
 
     TreeOperations.removeKey(storage, transaction.runningRoot(), viewKey);
-    transaction.addAction(ImmutableAction.builder().type(ActionType.VIEW_DROP).build());
+    Action action =
+        ImmutableAction.builder()
+            .objectType(ObjectType.VIEW)
+            .namespaceName(namespaceName)
+            .namespaceObjectName(viewName)
+            .objectKey(viewKey)
+            .type(ActionType.VIEW_DROP)
+            .build();
+    transaction.addAction(action);
   }
 }

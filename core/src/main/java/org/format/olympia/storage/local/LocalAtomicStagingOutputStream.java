@@ -35,8 +35,6 @@ public class LocalAtomicStagingOutputStream extends AtomicOutputStream {
           protected void commit() throws IOException {
             // this would result in potential orphan directories,
             // but there is not a better way at this moment
-            // plus with the file path optimization strategy,
-            // it is okay to create these folders since they would be used eventually
             createParentDirectories();
             Files.move(getStagingFilePath(), getTargetFilePath());
           }
