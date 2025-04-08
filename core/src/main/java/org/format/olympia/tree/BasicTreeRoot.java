@@ -69,7 +69,7 @@ public class BasicTreeRoot extends BasicTreeNode implements TreeRoot {
   }
 
   @Override
-  public int getOrder() {
+  public int order() {
     return order;
   }
 

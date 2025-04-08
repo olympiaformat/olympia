@@ -87,16 +87,19 @@ For example, the pivot table of the root node in the example in overview would l
 ## Catalog Objects and Actions
 
 Each type of object in a catalog has a Protobuf definition, as well as a set of actions related to the object.
-See [objects.proto](https://github.com/olympiaformat/olympia/blob/main/objects.proto) and 
-[actions.proto](https://github.com/olympiaformat/olympia/blob/main/actions.proto) for the actual definitions.
+See [objects.proto](https://github.com/olympiaformat/olympia/blob/main/proto/objects.proto) and 
+[actions.proto](https://github.com/olympiaformat/olympia/blob/main/proto/actions.proto) for the actual definitions.
 
-At this moment, Olympia supports the following objects:
+Each object has an increasing numeric type ID starting from 0.
+At this moment, Olympia supports the following objects with their corresponding ID:
 
-- Catalog
-- Namespace
-- Table
-- View
-- Distributed Transaction
+| Object Type             | ID |
+|-------------------------|----|
+| Catalog                 | 0  |
+| Namespace               | 1  |
+| Table                   | 2  |
+| View                    | 3  |
+| Distributed Transaction | 4  |
 
 ## Tree Key Encoding
 
@@ -120,7 +123,7 @@ and just provide metadata information about the specific node. Here is a list of
 The object key is a UTF-8 string that uniquely identifies the object and also allows sorting it in a
 lexicographical order that resembles the object hierarchy in a catalog.
 
-#### Object Name
+#### Object Name Encoding
 
 The object name has maximum size in bytes defined in the catalog definition file,
 with one configuration for each type of object.
@@ -137,31 +140,31 @@ When used in an object key, the object name is right-padded with space up to the
 For example, a namespace `default` under catalog definition
 `namespace_name_max_size_bytes=8` will have an encoded object name`[space]default[space]`.
 
-#### Object Definition Schema ID
+#### Object Type ID Encoding
 
-The schema of the object definition has a numeric ID starting from 0,
-and is encoded to a 4 character base64 string that uses the following encoding:
+When used in the object key, the object type ID is encoded to a 4 character base64 string that uses the following encoding:
 
 - Uppercase letters: A–Z, with indices 0–25
 - Lowercase letters: a–z, with indices 26–51
 - Digits: 0–9, with indices 52–61
-- Special symbols: `+` and `/`, with indices 62–63
-- Padding character `=`, which may only appear at the end of the string
+- Special symbols: `+` and `-`, with indices 62–63
+- Right padding character `=` if there are fewer than 4 characters after encoding
 
-For example, schema ID `4` is encoded to `D===`.
+For example, object type ID `4` is encoded to `E===`.
 
 #### Object Key Format
 
-The object key format combines the encoded object name and object definition schema ID rules above to form a unique key
+The object key format combines the encoded object key ID and encoded object name above to form a unique key
 for each type of object. See the table below for the format for each type of object: 
 (contents in `<>` should be substituted, space character is expressed as `[space]` for clarity)
 
-| Object Type | Schema ID | Object ID Format                                   | Example                                              |
-|-------------|-----------|----------------------------------------------------|------------------------------------------------------|
-| Catalog     | 0         | N/A, use the catalog definition key                |                                                      |
-| Namespace   | 1         | `B===<encoded namespace name>`                     | `B===default[space]`                                 |
-| Table       | 2         | `C===<encoded namespace name><encoded table name>` | `C===default[space]table[space][space][space]`       |
-| View        | 3         | `D===<encoded namespace name><encoded view name>`  | `C===default[space]view[space][space][space][space]` |
+| Object Type             | Object Key Format                                        | Example                                              |
+|-------------------------|----------------------------------------------------------|------------------------------------------------------|
+| Catalog                 | N/A, use the catalog definition key                      |                                                      |
+| Namespace               | `B===<encoded namespace name>`                           | `B===default[space]`                                 |
+| Table                   | `C===<encoded namespace name><encoded table name>`       | `C===default[space]table[space][space][space]`       |
+| View                    | `D===<encoded namespace name><encoded view name>`        | `D===default[space]view[space][space][space][space]` |
+| Distributed Transaction | N/A, distributed transaction is not persisted in catalog |                                                      |
 
 ## Files
 

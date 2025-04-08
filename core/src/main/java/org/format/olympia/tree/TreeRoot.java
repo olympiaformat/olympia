@@ -39,7 +39,7 @@ public interface TreeRoot extends TreeNode {
 
   void setCatalogDefFilePath(String catalogDefFilePath);
 
-  int getOrder();
+  int order();
 
   void setOrder(int order);
 }

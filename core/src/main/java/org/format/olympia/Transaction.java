@@ -17,6 +17,7 @@ import java.io.Serializable;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import org.format.olympia.action.Action;
 import org.format.olympia.proto.objects.IsolationLevel;
 import org.format.olympia.relocated.com.google.common.collect.Lists;
 import org.format.olympia.tree.TreeRoot;
@@ -52,7 +53,7 @@ public class Transaction implements Serializable {
     return new Builder();
   }
 
-  String transactionId() {
+  public String transactionId() {
     return transactionId;
   }
 
@@ -61,7 +62,7 @@ public class Transaction implements Serializable {
     this.transactionId = transactionId;
   }
 
-  TreeRoot beginningRoot() {
+  public TreeRoot beginningRoot() {
     return beginningRoot;
   }
 
@@ -70,7 +71,7 @@ public class Transaction implements Serializable {
     this.beginningRoot = beginningRoot;
   }
 
-  TreeRoot runningRoot() {
+  public TreeRoot runningRoot() {
     return runningRoot;
   }
 
@@ -79,7 +80,7 @@ public class Transaction implements Serializable {
     this.runningRoot = runningRoot;
   }
 
-  long beganAtMillis() {
+  public long beganAtMillis() {
     return beganAtMillis;
   }
 
@@ -88,7 +89,7 @@ public class Transaction implements Serializable {
     this.beganAtMillis = beganAtMillis;
   }
 
-  long expireAtMillis() {
+  public long expireAtMillis() {
     return expireAtMillis;
   }
 
@@ -97,7 +98,7 @@ public class Transaction implements Serializable {
     this.expireAtMillis = expireAtMillis;
   }
 
-  IsolationLevel isolationLevel() {
+  public IsolationLevel isolationLevel() {
     return isolationLevel;
   }
 

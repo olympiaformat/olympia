@@ -21,6 +21,21 @@ option java_multiple_files = true;
 
 package org.format.olympia.proto.objects;
 
+message ObjectDef {
+  enum ObjectType {
+    CATALOG = 0;
+    NAMESPACE = 1;
+    TABLE = 2;
+    VIEW = 3;
+    DISTRIBUTED_TRANSACTION = 4;
+  }
+
+  ObjectType type = 1;
+  bytes def = 2;
+  string namespaceName = 3;
+  string namespaceObjectName = 4;
+}
+
 message CatalogDef {
   string id = 1;
   uint32 major_version = 2;
@@ -42,21 +57,34 @@ message NamespaceDef {
 
 message TableDef {
   string id = 1;
-  string table_type = 2;
-  string table_format = 3;
-  map<string, string> format_properties = 4;
-  map<string, string> properties = 5;
+
+  enum TableFormat {
+    ICEBERG = 0;
+  }
+
+  TableFormat table_format = 2;
+  map<string, string> properties = 3;
+  string iceberg_metadata_location = 4;
+  string iceberg_previous_metadata_location = 5;
 }
 
 message ViewDef {
   string id = 1;
-  bool schema_binding = 2;
-  Schema schema = 3;
-  bytes substrait_read_rel = 4;
+
+  enum ViewFormat {
+    SUBSTRAIT = 0;
+  }
+
+  ViewFormat view_format = 2;
+  bool schema_binding = 3;
+  Schema schema = 4;
   string default_namespace_name = 5;
   repeated NamespaceObjectFullName referenced_object_full_names = 6;
   map<string, string> properties = 7;
+  bytes substrait_read_rel = 8;
 }
+
+
 
 message DistributedTransactionDef {
   string id = 1;
@@ -79,6 +107,37 @@ message Schema {
 message Column {
   uint32 id = 1;
   string name = 2;
+
+  enum DataType {
+    BOOLEAN = 0;
+    INT2 = 1;
+    INT4 = 2;
+    INT8 = 3;
+    DECIMAL = 4;
+    FLOAT4 = 5;
+    FLOAT8 = 6;
+    CHAR = 7;
+    VARCHAR = 8;
+    DATE = 9;
+    TIME3 = 10;
+    TIME6 = 11;
+    TIME9 = 12;
+    TIMETZ3 = 13;
+    TIMETZ6 = 14;
+    TIMETZ9 = 15;
+    TIMESTAMP3 = 16;
+    TIMESTAMP6 = 17;
+    TIMESTAMP9 = 18;
+    TIMESTAMPTZ3 = 19;
+    TIMESTAMPTZ6 = 20;
+    TIMESTAMPTZ9 = 21;
+    FIXED = 22;
+    BINARY = 23;
+    STRUCT = 24;
+    MAP = 25;
+    LIST = 26;
+  }
+
   DataType type = 3;
   bool nullable = 4;
   map<string, string> properties = 5;
@@ -86,36 +145,6 @@ message Column {
   Column map_key = 7;
   Column map_value = 8;
   Column list_element = 9;
-}
-
-enum DataType {
-  BOOLEAN = 0;
-  INT2 = 1;
-  INT4 = 2;
-  INT8 = 3;
-  DECIMAL = 4;
-  FLOAT4 = 5;
-  FLOAT8 = 6;
-  CHAR = 7;
-  VARCHAR = 8;
-  DATE = 9;
-  TIME3 = 10;
-  TIME6 = 11;
-  TIME9 = 12;
-  TIMETZ3 = 13;
-  TIMETZ6 = 14;
-  TIMETZ9 = 15;
-  TIMESTAMP3 = 16;
-  TIMESTAMP6 = 17;
-  TIMESTAMP9 = 18;
-  TIMESTAMPTZ3 = 19;
-  TIMESTAMPTZ6 = 20;
-  TIMESTAMPTZ9 = 21;
-  FIXED = 22;
-  BINARY = 23;
-  STRUCT = 24;
-  MAP = 25;
-  LIST = 26;
 }
 
 enum IsolationLevel {

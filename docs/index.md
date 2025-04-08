@@ -24,10 +24,10 @@ Azure Data Lake Storage, etc.
 Olympia as a format also uses relative paths across the board, 
 so that you can easily port your Olympia catalog from one storage to another by simply copying all the contents a directory.
 
-### Embedded Component for Catalog Server Standards
+### Embedded Component for Communication Protocol Servers
 
-If you would like to build a catalog server that is compliant with 
-open or proprietary catalog standards like Apache Iceberg REST catalog standard,
+If you would like to build a server that is compliant with 
+open or proprietary communication protocols like the Apache Iceberg REST catalog standard,
 you can use Olympia to handle all the technical complexities of interacting with different types of objects in a catalog,
 and put your focus on developing business logic in your catalog server such as authentication, 
 server routing, server monitoring, etc.

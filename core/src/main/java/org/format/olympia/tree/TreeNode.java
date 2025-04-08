@@ -14,9 +14,11 @@
 package org.format.olympia.tree;
 
 import java.io.Serializable;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.format.olympia.action.Action;
 
 /**
  * Representation of a tree node.
@@ -49,11 +51,14 @@ public interface TreeNode extends Serializable {
   void clearCreatedAtMillis();
 
   /**
-   * THe number of keys in the node key table
+   * THe number of keys in the pivot table
    *
    * @return number of keys
    */
   int numKeys();
+
+  /** The number of actions */
+  int numActions();
 
   NodeSearchResult search(String key);
 
@@ -69,36 +74,17 @@ public interface TreeNode extends Serializable {
 
   List<VectorSlice> getVectorSlices();
 
-  default boolean isDirty() {
-    return !pendingChanges().isEmpty()
-        || getVectorSlices().size() > 1
-        || getLeftmostChild().isPresent();
-  }
+  boolean isDirty();
 
-  default void addVectorSlice(String sourcePath, int startIndex, int endIndex) {
-    getVectorSlices()
-        .add(
-            ImmutableVectorSlice.builder()
-                .path(sourcePath)
-                .startIndex(startIndex)
-                .endIndex(endIndex)
-                .build());
-  }
+  void addVectorSlice(String sourcePath, int startIndex, int endIndex);
 
-  default void addInMemoryChange(String key, String value, TreeNode child) {
-    NodeKeyTableRow row =
-        ImmutableNodeKeyTableRow.builder()
-            .key(Optional.ofNullable(key))
-            .value(Optional.ofNullable(value))
-            .child(Optional.ofNullable(child))
-            .build();
-
-    if (key == null) {
-      setLeftmostChild(row);
-    } else {
-      pendingChanges().put(key, row);
-    }
-  }
+  void addInMemoryChange(String key, String value, TreeNode child);
 
   void clear();
+
+  Iterable<Action> actions();
+
+  void setActions(Collection<Action> actions);
+
+  void clearActions();
 }

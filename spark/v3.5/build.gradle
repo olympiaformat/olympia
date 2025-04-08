@@ -35,6 +35,7 @@ project(":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}") {
         }
 
         compileOnly("org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark.hive35.get()}")
+        compileOnly("org.apache.iceberg:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersion}:1.8.1")
 
         testImplementation libs.junit.jupiter
     }
@@ -73,6 +74,7 @@ project(":olympia-spark:olympia-spark-extensions-${sparkMajorVersion}_${scalaVer
         compileOnly "org.scala-lang:scala-library"
         compileOnly project(":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}")
         compileOnly("org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark.hive35.get()}")
+        compileOnly("org.apache.iceberg:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersion}:1.8.1")
 
         testImplementation project(path: ":olympia-spark:olympia-spark-${sparkMajorVersion}_${scalaVersion}")
         testImplementation libs.junit.jupiter

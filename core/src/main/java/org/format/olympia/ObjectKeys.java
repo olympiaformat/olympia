@@ -36,6 +36,10 @@ public class ObjectKeys {
   public static final String NUMBER_OF_KEYS = "n_keys";
   public static final byte[] NUMBER_OF_KEYS_BYTES = NUMBER_OF_KEYS.getBytes(StandardCharsets.UTF_8);
 
+  public static final String NUMBER_OF_ACTIONS = "n_actions";
+  public static final byte[] NUMBER_OF_ACTIONS_BYTES =
+      NUMBER_OF_ACTIONS.getBytes(StandardCharsets.UTF_8);
+
   public static final String CREATED_AT_MILLIS = "created_at_millis";
   public static final byte[] CREATED_AT_MILLIS_BYTES =
       CREATED_AT_MILLIS.getBytes(StandardCharsets.UTF_8);
@@ -47,12 +51,13 @@ public class ObjectKeys {
           .add(ROLLBACK_FROM_ROOT_NODE)
           .add(CREATED_AT_MILLIS)
           .add(NUMBER_OF_KEYS)
+          .add(NUMBER_OF_ACTIONS)
           .build();
 
-  private static final int SCHEMA_ID_PART_SIZE = 4;
-  private static final String NAMESPACE_SCHEMA_ID_PART = "B===";
-  private static final String TABLE_SCHEMA_ID_PART = "C===";
-  private static final String VIEW_SCHEMA_ID_PART = "D===";
+  private static final int ENCODED_OBJECT_TYPE_ID_PART_SIZE = 4;
+  private static final String ENCODED_TYPE_ID_NAMESPACE = "B===";
+  private static final String ENCODED_TYPE_ID_TABLE = "C===";
+  private static final String ENCODED_TYPE_ID_VIEW = "D===";
 
   private ObjectKeys() {}
 
@@ -66,7 +71,7 @@ public class ObjectKeys {
         catalogDef.getNamespaceNameMaxSizeBytes());
 
     StringBuilder sb = new StringBuilder();
-    sb.append(NAMESPACE_SCHEMA_ID_PART);
+    sb.append(ENCODED_TYPE_ID_NAMESPACE);
     sb.append(namespaceName);
     for (int i = 0; i < catalogDef.getNamespaceNameMaxSizeBytes() - namespaceName.length(); i++) {
       sb.append(' ');
@@ -78,14 +83,15 @@ public class ObjectKeys {
   public static String namespaceNameFromKey(String namespaceKey, CatalogDef catalogDef) {
     ValidationUtil.checkArgument(
         isNamespaceKey(namespaceKey, catalogDef), "Invalid namespace key: %s", namespaceKey);
-    return namespaceKey.substring(SCHEMA_ID_PART_SIZE).trim();
+    return namespaceKey.substring(ENCODED_OBJECT_TYPE_ID_PART_SIZE).trim();
   }
 
   public static boolean isNamespaceKey(String key, CatalogDef catalogDef) {
     ValidationUtil.checkNotNull(catalogDef, "Catalog definition must be provided");
     ValidationUtil.checkNotNullOrEmptyString(key, "key must be provided");
-    return key.startsWith(NAMESPACE_SCHEMA_ID_PART)
-        && key.length() == SCHEMA_ID_PART_SIZE + catalogDef.getNamespaceNameMaxSizeBytes();
+    return key.startsWith(ENCODED_TYPE_ID_NAMESPACE)
+        && key.length()
+            == ENCODED_OBJECT_TYPE_ID_PART_SIZE + catalogDef.getNamespaceNameMaxSizeBytes();
   }
 
   public static String tableKey(String namespaceName, String tableName, CatalogDef catalogDef) {
@@ -105,7 +111,7 @@ public class ObjectKeys {
         catalogDef.getTableNameMaxSizeBytes());
 
     StringBuilder sb = new StringBuilder();
-    sb.append(TABLE_SCHEMA_ID_PART);
+    sb.append(ENCODED_TYPE_ID_TABLE);
     sb.append(namespaceName);
     for (int i = 0; i < catalogDef.getNamespaceNameMaxSizeBytes() - namespaceName.length(); i++) {
       sb.append(' ');
@@ -123,16 +129,16 @@ public class ObjectKeys {
     ValidationUtil.checkArgument(
         isTableKey(tableKey, catalogDef), "Invalid table key: %s", tableKey);
     return tableKey
-        .substring(SCHEMA_ID_PART_SIZE + catalogDef.getNamespaceNameMaxSizeBytes())
+        .substring(ENCODED_OBJECT_TYPE_ID_PART_SIZE + catalogDef.getNamespaceNameMaxSizeBytes())
         .trim();
   }
 
   public static boolean isTableKey(String key, CatalogDef catalogDef) {
     ValidationUtil.checkNotNull(catalogDef, "Catalog definition must be provided");
     ValidationUtil.checkNotNullOrEmptyString(key, "key must be provided");
-    return key.startsWith(TABLE_SCHEMA_ID_PART)
+    return key.startsWith(ENCODED_TYPE_ID_TABLE)
         && key.length()
-            == (SCHEMA_ID_PART_SIZE
+            == (ENCODED_OBJECT_TYPE_ID_PART_SIZE
                 + catalogDef.getNamespaceNameMaxSizeBytes()
                 + catalogDef.getTableNameMaxSizeBytes());
   }
@@ -140,8 +146,8 @@ public class ObjectKeys {
   public static String tableKeyNamespacePrefix(String namespaceName, CatalogDef catalogDef) {
     StringBuilder sb =
         new StringBuilder(
-            TABLE_SCHEMA_ID_PART.length() + catalogDef.getNamespaceNameMaxSizeBytes());
-    sb.append(TABLE_SCHEMA_ID_PART);
+            ENCODED_TYPE_ID_TABLE.length() + catalogDef.getNamespaceNameMaxSizeBytes());
+    sb.append(ENCODED_TYPE_ID_TABLE);
     sb.append(namespaceName);
     for (int i = 0; i < catalogDef.getNamespaceNameMaxSizeBytes() - namespaceName.length(); i++) {
       sb.append(' ');
@@ -166,7 +172,7 @@ public class ObjectKeys {
         catalogDef.getViewNameMaxSizeBytes());
 
     StringBuilder sb = new StringBuilder();
-    sb.append(VIEW_SCHEMA_ID_PART);
+    sb.append(ENCODED_TYPE_ID_VIEW);
     sb.append(namespaceName);
     for (int i = 0; i < catalogDef.getNamespaceNameMaxSizeBytes() - namespaceName.length(); i++) {
       sb.append(' ');
@@ -183,24 +189,25 @@ public class ObjectKeys {
   public static String viewNameFromKey(String viewKey, CatalogDef catalogDef) {
     ValidationUtil.checkArgument(isViewKey(viewKey, catalogDef), "Invalid view key: %s", viewKey);
     return viewKey
-        .substring(SCHEMA_ID_PART_SIZE + catalogDef.getNamespaceNameMaxSizeBytes())
+        .substring(ENCODED_OBJECT_TYPE_ID_PART_SIZE + catalogDef.getNamespaceNameMaxSizeBytes())
         .trim();
   }
 
   public static boolean isViewKey(String key, CatalogDef catalogDef) {
     ValidationUtil.checkNotNull(catalogDef, "Catalog definition must be provided");
     ValidationUtil.checkNotNullOrEmptyString(key, "key must be provided");
-    return key.startsWith(VIEW_SCHEMA_ID_PART)
+    return key.startsWith(ENCODED_TYPE_ID_VIEW)
         && key.length()
-            == (SCHEMA_ID_PART_SIZE
+            == (ENCODED_OBJECT_TYPE_ID_PART_SIZE
                 + catalogDef.getNamespaceNameMaxSizeBytes()
                 + catalogDef.getViewNameMaxSizeBytes());
   }
 
   public static String viewKeyNamespacePrefix(String namespaceName, CatalogDef catalogDef) {
     StringBuilder sb =
-        new StringBuilder(VIEW_SCHEMA_ID_PART.length() + catalogDef.getNamespaceNameMaxSizeBytes());
-    sb.append(VIEW_SCHEMA_ID_PART);
+        new StringBuilder(
+            ENCODED_TYPE_ID_VIEW.length() + catalogDef.getNamespaceNameMaxSizeBytes());
+    sb.append(ENCODED_TYPE_ID_VIEW);
     sb.append(namespaceName);
     for (int i = 0; i < catalogDef.getNamespaceNameMaxSizeBytes() - namespaceName.length(); i++) {
       sb.append(' ');
