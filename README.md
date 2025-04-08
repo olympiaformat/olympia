@@ -31,6 +31,23 @@ To fix code style, run:
 ./gradlew spotlessApply
 ```
 
+## Docker
+
+When making changes to the local files and test them out, you can build the image locally:
+
+```bash
+./gradlew :olympia-spark:olympia-spark-runtime-3.5_2.12:shadowJar
+docker image rm -f olympia/olympia-gravitino-irc
+docker build -t olympia/olympia-gravitino-irc -f docker/gravitino/Dockerfile .
+```
+
+Run the Docker container:
+
+```bash
+docker run -d -p 9001:9001 --name olympia-gravitino-irc \
+olympia/olympia-gravitino-irc
+```
+
 ## Website
 
 The website is built using [mkdocs-material](https://pypi.org/project/mkdocs-material).
