@@ -18,12 +18,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.PriorityQueue;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.FieldVector;
@@ -42,7 +39,6 @@ import org.format.olympia.action.Action;
 import org.format.olympia.action.AnalyzeActionConflicts;
 import org.format.olympia.action.ConflictAnalysisResult;
 import org.format.olympia.exception.CommitConflictUnresolvableException;
-import org.format.olympia.exception.OlympiaRuntimeException;
 import org.format.olympia.exception.StorageAtomicSealFailureException;
 import org.format.olympia.exception.StorageFileOpenFailureException;
 import org.format.olympia.exception.StorageReadFailureException;
@@ -117,7 +113,7 @@ public class TreeOperations {
           }
         }
         if (numKeys != 0) {
-          node.addVectorSlice(path, dataStartIndex, dataStartIndex + numKeys - 1);
+          node.addVectorSlice(path, dataStartIndex, dataStartIndex + numKeys);
         }
       }
     } catch (IOException e) {
@@ -276,7 +272,6 @@ public class TreeOperations {
   private static void writeNodeFile(
       CatalogStorage storage, AtomicOutputStream stream, TreeNode node, long createdAtMillis) {
     BufferAllocator allocator = storage.getArrowAllocator();
-    List<NodeKeyTableRow> nodeRows = materializeDirtyNode(storage, node);
     VarCharVector keyVector = new VarCharVector(NODE_FILE_KEY_COLUMN_NAME, allocator);
     VarCharVector valueVector = new VarCharVector(NODE_FILE_VALUE_COLUMN_NAME, allocator);
     VarCharVector childVector = new VarCharVector(NODE_FILE_CHILD_POINTER_COLUMN_NAME, allocator);
@@ -290,15 +285,15 @@ public class TreeOperations {
     childVector.setNull(index++);
 
     keyVector.setSafe(index, ObjectKeys.NUMBER_OF_KEYS_BYTES);
-    valueVector.setSafe(index, Integer.toString(nodeRows.size()).getBytes(StandardCharsets.UTF_8));
+    valueVector.setSafe(index, Integer.toString(node.numKeys()).getBytes(StandardCharsets.UTF_8));
     childVector.setNull(index++);
 
     if (node instanceof TreeRoot) {
       index = writeRootSystemRows((TreeRoot) node, keyVector, valueVector, childVector);
     }
 
-    for (NodeKeyTableRow row : nodeRows) {
-      writeNodeTableRow(row, keyVector, valueVector, childVector, index++);
+    try (NodeRowMerger merger = new NodeRowMerger(storage, node)) {
+      index = merger.writeToVectors(keyVector, valueVector, childVector, index);
     }
 
     //    if (node instanceof TreeRoot) {
@@ -641,8 +636,6 @@ public class TreeOperations {
     }
 
     NodeSearchResult bestSliceResult = null;
-    //    NodeSearchResult bestSliceResult = findBestSliceResult(storage, node, key);
-
     for (VectorSlice slice : node.getVectorSlices()) {
       NodeSearchResult result =
           searchInPersistedData(storage, slice.path(), key, slice.startIndex(), slice.endIndex());
@@ -719,7 +712,7 @@ public class TreeOperations {
             return createNodeSearchResult(storage, keyVector, valueVector, childVector, result);
           } else {
             int floorIndex = -result - 2;
-            if (floorIndex >= startIndex && floorIndex < endIndex) {
+            if (floorIndex >= startIndex && floorIndex <= endIndex) {
               return createNodeSearchResult(
                   storage, keyVector, valueVector, childVector, floorIndex);
             }
@@ -738,13 +731,11 @@ public class TreeOperations {
         .build();
   }
 
-  private static void splitAndPropagateChanges(
+  public static void splitAndPropagateChanges(
       CatalogStorage storage, List<NodeSearchResult> path, int order) {
     TreeNode nodeToSplit = path.get(path.size() - 1).nodePointer().get();
-    List<NodeKeyTableRow> rows = materializeDirtyNode(storage, nodeToSplit);
 
-    int middleIndex = (rows.size() - 1) / 2;
-    NodeKeyTableRow middleRow = rows.get(middleIndex);
+    NodeKeyTableRow middleRow = findPivotRow(storage, nodeToSplit, order);
     String middleKey = middleRow.key().orElse(null);
     String middleValue = middleRow.value().orElse(null);
     ValidationUtil.checkState(
@@ -757,14 +748,36 @@ public class TreeOperations {
     leftNode.setPath(FileLocations.newNodeFilePath());
     rightNode.setPath(FileLocations.newNodeFilePath());
 
-    for (int i = 0; i < rows.size(); i++) {
-      NodeKeyTableRow row = rows.get(i);
-      if (i < middleIndex) {
-        leftNode.addInMemoryChange(
-            row.key().orElse(null), row.value().orElse(null), row.child().orElse(null));
-      } else if (i > middleIndex) {
-        rightNode.addInMemoryChange(
-            row.key().orElse(null), row.value().orElse(null), row.child().orElse(null));
+    // binary search the vector slices to split slices between before and after midkey
+    for (VectorSlice slice : nodeToSplit.getVectorSlices()) {
+      SplitVectorResult splitResult = splitVectorSlices(storage, slice, middleKey);
+      if (splitResult.leftSlice().isPresent()) {
+        leftNode.getVectorSlices().add(splitResult.leftSlice().get());
+      }
+      if (splitResult.rightSlice().isPresent()) {
+        rightNode.getVectorSlices().add(splitResult.rightSlice().get());
+      }
+    }
+
+    // if nodeToSplit has a left child that goes to the leftNode
+    if (nodeToSplit.getLeftmostChild().isPresent()) {
+      leftNode.setLeftmostChild(nodeToSplit.getLeftmostChild().get());
+    }
+
+    // if nodeToSplit has a child that becomes the left child for rightNode
+    if (middleRow.child().isPresent()) {
+      rightNode.setLeftmostChild(
+          ImmutableNodeKeyTableRow.builder().child(middleRow.child().get()).build());
+    }
+
+    // move pending changes with the nodes
+    for (NodeKeyTableRow pendingChange : nodeToSplit.pendingChanges().values()) {
+      String currentKey = pendingChange.key().get();
+      int comparison = currentKey.compareTo(middleKey);
+      if (comparison > 0) {
+        rightNode.pendingChanges().put(currentKey, pendingChange);
+      } else if (comparison < 0) {
+        leftNode.pendingChanges().put(currentKey, pendingChange);
       }
     }
 
@@ -789,142 +802,73 @@ public class TreeOperations {
     }
   }
 
+  private static NodeKeyTableRow findPivotRow(CatalogStorage storage, TreeNode node, int order) {
+    try (NodeRowMerger merger = new NodeRowMerger(storage, node)) {
+      return merger.findMiddleRow(order);
+    }
+  }
+
+  private static SplitVectorResult splitVectorSlices(
+      CatalogStorage storage, VectorSlice slice, String key) {
+    try (LocalInputStream stream = storage.startReadLocal(slice.path());
+        BufferAllocator allocator = storage.getArrowAllocator()) {
+
+      VarCharVector searchKeyVector = TreeUtil.createSearchKey(allocator, key);
+      try (ArrowFileReader reader = new ArrowFileReader(stream.channel(), allocator)) {
+        for (ArrowBlock arrowBlock : reader.getRecordBlocks()) {
+          reader.loadRecordBatch(arrowBlock);
+          VectorSchemaRoot schemaRoot = reader.getVectorSchemaRoot();
+          VarCharVector keyVector =
+              (VarCharVector) schemaRoot.getVector(NODE_FILE_KEY_COLUMN_INDEX);
+
+          int searchEnd = Math.min(slice.endIndex(), keyVector.getValueCount() - 1);
+          if (slice.startIndex() > searchEnd) {
+            continue;
+          }
+          VectorValueComparator<VarCharVector> comparator = new NodeVarCharComparator();
+          comparator.attachVector(keyVector);
+          int result =
+              TreeUtil.vectorBinarySearch(
+                  keyVector,
+                  comparator,
+                  searchKeyVector,
+                  NODE_FILE_KEY_COLUMN_INDEX,
+                  slice.startIndex(),
+                  searchEnd);
+          ImmutableSplitVectorResult.Builder builder = ImmutableSplitVectorResult.builder();
+
+          if (result >= 0) {
+            if (slice.startIndex() <= result - 1) {
+              builder.leftSlice(ImmutableVectorSlice.copyOf(slice).withEndIndex(result - 1));
+            }
+            if (result + 1 <= searchEnd) {
+              builder.rightSlice(ImmutableVectorSlice.copyOf(slice).withStartIndex(result + 1));
+            }
+          } else {
+            int floorIndex = -result - 2;
+
+            if (slice.startIndex() <= floorIndex) {
+              builder.leftSlice(ImmutableVectorSlice.copyOf(slice).withEndIndex(floorIndex));
+            }
+            if (floorIndex + 1 <= searchEnd) {
+              builder.rightSlice(ImmutableVectorSlice.copyOf(slice).withStartIndex(floorIndex + 1));
+            }
+          }
+          return builder.build();
+        }
+      } finally {
+        searchKeyVector.close();
+      }
+    } catch (IOException e) {
+      throw new StorageReadFailureException(e);
+    }
+    return ImmutableSplitVectorResult.builder().build();
+  }
+
   private static List<NodeKeyTableRow> materializeDirtyNode(CatalogStorage storage, TreeNode node) {
-    Map<String, NodeKeyTableRow> pendingChanges = node.pendingChanges();
-    List<NodeKeyTableRow> result = Lists.newArrayList();
-    List<AutoCloseable> resources = Lists.newArrayList();
-    PriorityQueue<VectorSliceStream> sliceQueue =
-        new PriorityQueue<>(Comparator.comparing(VectorSliceStream::getCurrentKey));
-
-    try {
-      for (VectorSlice slice : node.getVectorSlices()) {
-        VectorSliceStream stream = new VectorSliceStream(storage, slice);
-        resources.add(stream);
-        if (stream.hasNext()) {
-          sliceQueue.add(stream);
-        }
-      }
-      mergeView(node, sliceQueue, result, pendingChanges);
-      return result;
-    } finally {
-      for (AutoCloseable resource : resources) {
-        try {
-          resource.close();
-        } catch (Exception e) {
-          throw new OlympiaRuntimeException(e);
-        }
-      }
+    try (NodeRowMerger merger = new NodeRowMerger(storage, node)) {
+      return merger.collectRows();
     }
-  }
-
-  private static void mergeView(
-      TreeNode node,
-      PriorityQueue<VectorSliceStream> sliceQueue,
-      List<NodeKeyTableRow> result,
-      Map<String, NodeKeyTableRow> pendingChanges) {
-    boolean hasSliceWithNullKey = !sliceQueue.isEmpty() && sliceQueue.peek().isCurrentKeyNull();
-    Optional<NodeKeyTableRow> pendingLeftChild = node.getLeftmostChild();
-    if (pendingLeftChild.isPresent()) {
-      result.add(pendingLeftChild.get());
-      if (hasSliceWithNullKey) {
-        advanceQueue(sliceQueue);
-      }
-    } else if (hasSliceWithNullKey) {
-      // Use slice with null key if no in-memory leftmost child
-      result.add(createRowFromSlice(sliceQueue.peek()));
-      advanceQueue(sliceQueue);
-    } else {
-      // No leftmost child in either source, add empty entry
-      result.add(ImmutableNodeKeyTableRow.builder().build());
-    }
-
-    Iterator<NodeKeyTableRow> pendingIter = pendingChanges.values().iterator();
-    NodeKeyTableRow currentPending = pendingIter.hasNext() ? pendingIter.next() : null;
-
-    while (!sliceQueue.isEmpty() || currentPending != null) {
-      if (currentPending == null) {
-        addRemainingSlices(sliceQueue, result);
-        return;
-      }
-
-      if (sliceQueue.isEmpty()) {
-        addRemainingPending(currentPending, pendingIter, result);
-        return;
-      }
-
-      currentPending =
-          compareKeysAndAdvanceStreams(sliceQueue, result, currentPending, pendingIter);
-    }
-  }
-
-  private static NodeKeyTableRow compareKeysAndAdvanceStreams(
-      PriorityQueue<VectorSliceStream> sliceQueue,
-      List<NodeKeyTableRow> result,
-      NodeKeyTableRow currentPending,
-      Iterator<NodeKeyTableRow> pendingIter) {
-    String pendingKey = currentPending.key().orElse(null);
-    String sliceKey = sliceQueue.peek().getCurrentKey();
-    NodeKeyTableRow current = currentPending;
-    int compare = TreeUtil.compareKeys(sliceKey, pendingKey);
-    if (compare < 0) {
-      // Slice key comes first
-      result.add(createRowFromSlice(sliceQueue.peek()));
-      advanceQueue(sliceQueue);
-    } else if (compare > 0) {
-      // Pending key comes first
-      result.add(currentPending);
-      current = pendingIter.hasNext() ? pendingIter.next() : null;
-    } else {
-      // Same key pending overrides slice value
-      result.add(currentPending);
-      current = pendingIter.hasNext() ? pendingIter.next() : null;
-      advanceQueue(sliceQueue);
-    }
-    return current;
-  }
-
-  private static void advanceQueue(PriorityQueue<VectorSliceStream> queue) {
-    VectorSliceStream stream = queue.poll();
-    if (stream.hasNext()) {
-      stream.advance();
-      if (stream.hasNext()) {
-        queue.add(stream);
-      }
-    }
-  }
-
-  private static void addRemainingSlices(
-      PriorityQueue<VectorSliceStream> sliceQueue, List<NodeKeyTableRow> result) {
-
-    while (!sliceQueue.isEmpty()) {
-      result.add(createRowFromSlice(sliceQueue.peek()));
-      advanceQueue(sliceQueue);
-    }
-  }
-
-  // Add remaining pending changes
-  private static void addRemainingPending(
-      NodeKeyTableRow current, Iterator<NodeKeyTableRow> iterator, List<NodeKeyTableRow> result) {
-
-    result.add(current);
-    while (iterator.hasNext()) {
-      result.add(iterator.next());
-    }
-  }
-
-  private static NodeKeyTableRow createRowFromSlice(VectorSliceStream stream) {
-    String sliceKey = stream.getCurrentKey();
-    TreeNode child = null;
-    String childPath = stream.getCurrentChildPath();
-    if (childPath != null) {
-      child = new BasicTreeNode();
-      child.setPath(childPath);
-    }
-    return ImmutableNodeKeyTableRow.builder()
-        .key(Optional.ofNullable(sliceKey))
-        .value(Optional.ofNullable(stream.getCurrentValue()))
-        .child(Optional.ofNullable(child))
-        .build();
   }
 
   private static NodeSearchResult createNodeSearchResult(
