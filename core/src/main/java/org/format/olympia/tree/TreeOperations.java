@@ -569,32 +569,64 @@ public class TreeOperations {
   public static void setValue(CatalogStorage storage, TreeRoot root, String key, String value) {
     List<NodeSearchResult> path = findPathToChild(storage, root, key);
     NodeSearchResult leafResult = path.get(path.size() - 1);
-    TreeNode leafNode = leafResult.nodePointer().orElse(null);
+    TreeNode leafNode = leafResult.sourceNode().orElse(null);
     ValidationUtil.checkState(leafNode != null, "Path search didn't return a valid node");
     boolean wasClean = !leafNode.isDirty();
 
-    leafNode.set(key, value);
+    if (leafResult.key().isPresent()
+        && leafResult.key().get().equals(key)
+        && leafResult.location().isPresent()) {
+      splitVectorSliceAtIndex(leafNode, leafResult.location().get());
+    }
 
+    leafNode.set(key, value);
     if (wasClean && !(leafNode instanceof TreeRoot)) {
-      String newLeafPath = FileLocations.newNodeFilePath();
-      leafNode.setPath(newLeafPath);
-      updatePathPointers(path);
+      propagateChildChangesUpward(path);
     }
 
     if (needsSplit(leafNode, root.order())) {
-      splitAndPropagateChanges(storage, path, root.order() - 1);
+      splitNode(storage, path, root.order());
     }
   }
 
-  private static void updatePathPointers(List<NodeSearchResult> path) {
-    // TODO: ensure paths aren't changed already
-    for (int i = path.size() - 1; i >= 0; i--) {
-      TreeNode childNode = path.get(i).nodePointer().get();
-      TreeNode parentNode = path.get(i - 1).nodePointer().get();
-      NodeSearchResult childResult = path.get(i);
+  private static void splitVectorSliceAtIndex(TreeNode leafNode, VectorSliceLocation location) {
+    VectorSlice slice = location.slice();
+    int index = location.index();
+    leafNode.getVectorSlices().remove(slice);
+    if (slice.startIndex() <= index - 1) {
+      leafNode
+          .getVectorSlices()
+          .add(
+              ImmutableVectorSlice.copyOf(slice)
+                  .withEndIndex(index - 1)
+                  .withStartsWithLeftChild(slice.startsWithLeftChild()));
+    }
 
-      parentNode.addInMemoryChange(
-          childResult.key().orElse(null), childResult.value().orElse(null), childNode);
+    if (index + 1 <= slice.endIndex()) {
+      leafNode
+          .getVectorSlices()
+          .add(
+              ImmutableVectorSlice.copyOf(slice)
+                  .withStartIndex(index + 1)
+                  .withStartsWithLeftChild(false));
+    }
+  }
+
+  private static void propagateChildChangesUpward(List<NodeSearchResult> path) {
+    for (int i = path.size() - 1; i > 0; i--) {
+      NodeSearchResult childResult = path.get(i);
+      NodeSearchResult parentResult = path.get(i - 1);
+      TreeNode parent = parentResult.sourceNode().get();
+      TreeNode child = childResult.sourceNode().get();
+
+      if (child.isDirty()) {
+        String key = parentResult.key().orElse(null);
+        String value = parentResult.value().orElse(null);
+        if (key != null && childResult.location().isPresent()) {
+          splitVectorSliceAtIndex(parent, childResult.location().get());
+        }
+        parent.addInMemoryChange(key, value, child);
+      }
     }
   }
 
@@ -609,22 +641,19 @@ public class TreeOperations {
 
   private static List<NodeSearchResult> findPathToChild(
       CatalogStorage storage, TreeNode startNode, String key) {
-    List<NodeSearchResult> path =
-        Lists.newArrayList(ImmutableNodeSearchResult.builder().nodePointer(startNode).build());
+    List<NodeSearchResult> path = Lists.newArrayList();
     TreeNode currentNode = startNode;
 
-    while (true) {
+    while (currentNode != null) {
       NodeSearchResult result = searchInNode(storage, currentNode, key);
-      if (result.key().isPresent() && result.key().get().equals(key)) {
-        return path;
+      path.add(ImmutableNodeSearchResult.copyOf(result).withSourceNode(currentNode));
+      if (result.key().isPresent() && result.key().get().equals(key)
+          || result.nodePointer().isEmpty()) {
+        break;
       }
-      if (result.nodePointer().isPresent()) {
-        path.add(result);
-        currentNode = result.nodePointer().get();
-      } else {
-        return path;
-      }
+      currentNode = result.nodePointer().orElse(null);
     }
+    return path;
   }
 
   private static NodeSearchResult searchInNode(CatalogStorage storage, TreeNode node, String key) {
@@ -637,8 +666,7 @@ public class TreeOperations {
 
     NodeSearchResult bestSliceResult = null;
     for (VectorSlice slice : node.getVectorSlices()) {
-      NodeSearchResult result =
-          searchInPersistedData(storage, slice.path(), key, slice.startIndex(), slice.endIndex());
+      NodeSearchResult result = searchInPersistedData(storage, slice, key);
 
       // Handle exact match in slice
       if (result.key().isPresent() && result.key().get().equals(key)) {
@@ -682,8 +710,8 @@ public class TreeOperations {
   }
 
   public static NodeSearchResult searchInPersistedData(
-      CatalogStorage storage, String nodePath, String key, int startIndex, int endIndex) {
-    try (LocalInputStream stream = storage.startReadLocal(nodePath);
+      CatalogStorage storage, VectorSlice slice, String key) {
+    try (LocalInputStream stream = storage.startReadLocal(slice.path());
         BufferAllocator allocator = storage.getArrowAllocator()) {
 
       VarCharVector searchKeyVector = TreeUtil.createSearchKey(allocator, key);
@@ -698,8 +726,8 @@ public class TreeOperations {
           VarCharVector childVector =
               (VarCharVector) schemaRoot.getVector(NODE_FILE_CHILD_POINTER_COLUMN_INDEX);
 
-          int searchEnd = Math.min(endIndex, keyVector.getValueCount() - 1);
-          if (startIndex > searchEnd) {
+          int searchEnd = Math.min(slice.endIndex(), keyVector.getValueCount() - 1);
+          if (slice.startIndex() > searchEnd) {
             continue;
           }
           VectorValueComparator<VarCharVector> comparator = new NodeVarCharComparator();
@@ -709,12 +737,13 @@ public class TreeOperations {
                   keyVector, comparator, searchKeyVector, NODE_FILE_KEY_COLUMN_INDEX, 0, searchEnd);
 
           if (result >= 0) {
-            return createNodeSearchResult(storage, keyVector, valueVector, childVector, result);
+            return createNodeSearchResult(
+                storage, keyVector, valueVector, childVector, slice, result);
           } else {
             int floorIndex = -result - 2;
-            if (floorIndex >= startIndex && floorIndex <= endIndex) {
+            if (floorIndex >= slice.startIndex() && floorIndex <= searchEnd) {
               return createNodeSearchResult(
-                  storage, keyVector, valueVector, childVector, floorIndex);
+                  storage, keyVector, valueVector, childVector, slice, floorIndex);
             }
           }
         }
@@ -731,9 +760,8 @@ public class TreeOperations {
         .build();
   }
 
-  public static void splitAndPropagateChanges(
-      CatalogStorage storage, List<NodeSearchResult> path, int order) {
-    TreeNode nodeToSplit = path.get(path.size() - 1).nodePointer().get();
+  public static void splitNode(CatalogStorage storage, List<NodeSearchResult> path, int order) {
+    TreeNode nodeToSplit = path.get(path.size() - 1).sourceNode().orElse(null);
 
     NodeKeyTableRow middleRow = findPivotRow(storage, nodeToSplit, order);
     String middleKey = middleRow.key().orElse(null);
@@ -787,17 +815,15 @@ public class TreeOperations {
       nodeToSplit.addInMemoryChange(middleKey, middleValue, rightNode);
     } else {
       NodeSearchResult parentSearch = path.get(path.size() - 2);
-      NodeSearchResult floorResult = path.get(path.size() - 1);
-
-      TreeNode parent = parentSearch.nodePointer().get();
-      String floorKey = floorResult.key().orElse(null);
-      String floorValue = floorResult.value().orElse(null);
+      TreeNode parent = parentSearch.sourceNode().get();
+      String floorKey = parentSearch.key().orElse(null);
+      String floorValue = parentSearch.value().orElse(null);
 
       parent.addInMemoryChange(floorKey, floorValue, leftNode);
       parent.addInMemoryChange(middleKey, middleValue, rightNode);
 
       if (needsSplit(parent, order)) {
-        splitAndPropagateChanges(storage, path.subList(0, path.size() - 1), order);
+        splitNode(storage, path.subList(0, path.size() - 1), order);
       }
     }
   }
@@ -839,19 +865,31 @@ public class TreeOperations {
 
           if (result >= 0) {
             if (slice.startIndex() <= result - 1) {
-              builder.leftSlice(ImmutableVectorSlice.copyOf(slice).withEndIndex(result - 1));
+              builder.leftSlice(
+                  ImmutableVectorSlice.copyOf(slice)
+                      .withStartsWithLeftChild(slice.startsWithLeftChild())
+                      .withEndIndex(result - 1));
             }
             if (result + 1 <= searchEnd) {
-              builder.rightSlice(ImmutableVectorSlice.copyOf(slice).withStartIndex(result + 1));
+              builder.rightSlice(
+                  ImmutableVectorSlice.copyOf(slice)
+                      .withStartsWithLeftChild(false)
+                      .withStartIndex(result + 1));
             }
           } else {
             int floorIndex = -result - 2;
 
             if (slice.startIndex() <= floorIndex) {
-              builder.leftSlice(ImmutableVectorSlice.copyOf(slice).withEndIndex(floorIndex));
+              builder.leftSlice(
+                  ImmutableVectorSlice.copyOf(slice)
+                      .withStartsWithLeftChild(slice.startsWithLeftChild())
+                      .withEndIndex(floorIndex));
             }
             if (floorIndex + 1 <= searchEnd) {
-              builder.rightSlice(ImmutableVectorSlice.copyOf(slice).withStartIndex(floorIndex + 1));
+              builder.rightSlice(
+                  ImmutableVectorSlice.copyOf(slice)
+                      .withStartsWithLeftChild(false)
+                      .withStartIndex(floorIndex + 1));
             }
           }
           return builder.build();
@@ -876,6 +914,7 @@ public class TreeOperations {
       VarCharVector keyVector,
       VarCharVector valueVector,
       VarCharVector childVector,
+      VectorSlice slice,
       int index) {
     String key =
         keyVector.isNull(index) ? null : new String(keyVector.get(index), StandardCharsets.UTF_8);
@@ -892,11 +931,13 @@ public class TreeOperations {
     if (!Strings.isNullOrEmpty(childPath)) {
       child = readChildNodeFile(storage, childPath);
     }
-
+    VectorSliceLocation location =
+        ImmutableVectorSliceLocation.builder().slice(slice).index(index).build();
     return ImmutableNodeSearchResult.builder()
         .key(Optional.ofNullable(key))
         .value(Optional.ofNullable(value))
         .nodePointer(Optional.ofNullable(child))
+        .location(location)
         .build();
   }
 

@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
+import org.format.olympia.FileLocations;
 import org.format.olympia.action.Action;
 import org.format.olympia.relocated.com.google.common.collect.ImmutableList;
 import org.format.olympia.relocated.com.google.common.collect.Lists;
@@ -73,7 +74,11 @@ public class BasicTreeNode implements TreeNode {
   public int numKeys() {
     int count = pendingChanges.size();
     for (VectorSlice slice : vectorSlices) {
-      count += (slice.endIndex() - slice.startIndex() + 1);
+      int sliceKeyCount = slice.endIndex() - slice.startIndex() + 1;
+      if (slice.startsWithLeftChild()) {
+        sliceKeyCount--;
+      }
+      count += sliceKeyCount;
     }
     return count;
   }
@@ -123,6 +128,7 @@ public class BasicTreeNode implements TreeNode {
 
   @Override
   public void set(String key, String value) {
+    markDirty();
     NodeKeyTableRow existingRow = pendingChanges.get(key);
     Optional<TreeNode> child = existingRow != null ? existingRow.child() : Optional.empty();
     pendingChanges.put(
@@ -186,6 +192,7 @@ public class BasicTreeNode implements TreeNode {
 
   @Override
   public void addInMemoryChange(String key, String value, TreeNode child) {
+    markDirty();
     NodeKeyTableRow row =
         ImmutableNodeKeyTableRow.builder()
             .key(Optional.ofNullable(key))
@@ -222,5 +229,11 @@ public class BasicTreeNode implements TreeNode {
   public void clearActions() {
     this.actions = null;
     this.actionSet = false;
+  }
+
+  private void markDirty() {
+    if (!isDirty() && !(this instanceof BasicTreeRoot)) {
+      setPath(FileLocations.newNodeFilePath());
+    }
   }
 }
