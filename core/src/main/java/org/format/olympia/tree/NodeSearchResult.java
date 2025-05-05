@@ -24,4 +24,8 @@ public interface NodeSearchResult {
   Optional<TreeNode> nodePointer();
 
   Optional<String> key();
+
+  Optional<VectorSliceLocation> location();
+
+  Optional<TreeNode> sourceNode();
 }

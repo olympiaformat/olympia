@@ -305,4 +305,31 @@ public class TestTreeOperations {
     assertThat(TreeOperations.searchValue(storage, loadedRoot, "f").isPresent()).isFalse();
     assertThat(TreeOperations.searchValue(storage, loadedRoot, "q").isPresent()).isFalse();
   }
+
+  @Test
+  public void testVectorSliceSplittingOnUpdate(@TempDir Path tempDir) {
+    LocalStorageOps ops = new LocalStorageOps();
+    CatalogStorage storage = new BasicCatalogStorage(new LiteralURI("file://" + tempDir), ops);
+
+    TreeRoot treeRoot = new BasicTreeRoot();
+    treeRoot.setCatalogDefFilePath("some/path/to/catalog/def");
+
+    TreeOperations.setValue(storage, treeRoot, "a", "val-a");
+    TreeOperations.setValue(storage, treeRoot, "c", "val-c");
+    TreeOperations.setValue(storage, treeRoot, "e", "val-e");
+    TreeOperations.setValue(storage, treeRoot, "g", "val-g");
+    TreeOperations.setValue(storage, treeRoot, "i", "val-i");
+
+    String path = "test-vector-splice.arrow";
+    TreeOperations.writeRootNodeFile(storage, path, treeRoot);
+
+    TreeRoot loadedRoot = TreeOperations.readRootNodeFile(storage, path);
+    TreeOperations.setValue(storage, loadedRoot, "c", "val-c-updated"); // updated
+    TreeOperations.setValue(storage, loadedRoot, "k", "val-k"); // new value
+
+    assertThat(loadedRoot.pendingChanges()).containsKey("c");
+    assertThat(loadedRoot.pendingChanges().get("c").value().get()).isEqualTo("val-c-updated");
+    assertThat(loadedRoot.getVectorSlices()).hasSize(2);
+    assertThat(loadedRoot.numKeys()).isEqualTo(treeRoot.numKeys() + 1);
+  }
 }

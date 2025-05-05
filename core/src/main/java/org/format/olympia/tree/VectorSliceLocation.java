@@ -16,16 +16,8 @@ package org.format.olympia.tree;
 import org.immutables.value.Value;
 
 @Value.Immutable
-public interface VectorSlice {
+public interface VectorSliceLocation {
+  VectorSlice slice();
 
-  String path();
-
-  int startIndex();
-
-  int endIndex();
-
-  @Value.Default
-  default boolean startsWithLeftChild() {
-    return true;
-  }
+  int index();
 }
